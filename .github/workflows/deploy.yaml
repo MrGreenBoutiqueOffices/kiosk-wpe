@@ -1,0 +1,45 @@
+---
+name: Release
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+jobs:
+  deploy:
+    name: Deploy to Balena
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⤵️ Checkout code
+        uses: actions/checkout@v6.0.2
+      - name: Extract version from tag
+        id: get_data
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Set version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Update version in balena.yml
+        run: |
+          VERSION="${{ steps.get_data.outputs.version }}"
+          if [ -f balena.yml ]; then
+            sed -i "s/^version:.*/version: \"$VERSION\"/" balena.yml
+            echo "Updated balena.yml:"
+            cat balena.yml
+          else
+            echo "balena.yml not found" && exit 1
+          fi
+      - name: 🚀 Deploy to Balena fleet
+        uses: balena-io/deploy-to-balena-action@v2.2.12
+        id: deploy
+        with:
+          balena_token: ${{ secrets.BALENA_TOKEN }}
+          fleet: ${{ vars.BALENA_SLUG }}
+          note: |
+            # Block deployment
+            **Branch**: ${{ github.ref_name }}
+            **Commit**: ${{ github.sha }}
+            **Version**: ${{ steps.get_data.outputs.version }}
+      - name: 📣 Log result
+        run: echo "✅ Block version ${{ steps.deploy.outputs.version }} deployed to ${{ vars.BALENA_SLUG }}"

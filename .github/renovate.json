@@ -1,0 +1,58 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "timezone": "Europe/Amsterdam",
+  "schedule": ["before 6am every weekday"],
+  "rebaseWhen": "behind-base-branch",
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+  "commitMessagePrefix": "⬆️",
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "addLabels": ["go"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependency-groups"],
+      "rangeStrategy": "pin",
+      "addLabels": ["python"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependency-groups"],
+      "groupName": "python dev dependencies",
+      "groupSlug": "python-dev-dependencies"
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "addLabels": ["docker"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "addLabels": ["github_actions"],
+      "rangeStrategy": "pin",
+      "extractVersion": "^(?<version>v\\d+\\.\\d+\\.\\d+)$",
+      "versioning": "regex:^v(?<major>\\d+)(\\.(?<minor>\\d+)\\.(?<patch>\\d+))?$"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "matchManagers": ["github-actions", "dockerfile", "gomod", "pep621"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    }
+  ],
+  "docker-compose": {
+    "enabled": false
+  }
+}

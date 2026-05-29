@@ -1,0 +1,20 @@
+---
+name: kiosk-wpe
+description: >-
+  WPE/Cog kiosk browser block for Balena. Runs a fullscreen browser on a DRM
+  display without an X11 or Wayland compositor.
+version: 0.0.0
+type: sw.block
+
+assets:
+  repository:
+    type: blob.asset
+    data:
+      url: >-
+        https://github.com/MrGreenBoutiqueOffices/kiosk-wpe
+
+data:
+  defaultDeviceType: raspberrypi4-64
+  supportedDeviceTypes:
+    - raspberrypi4-64
+    - generic-aarch64

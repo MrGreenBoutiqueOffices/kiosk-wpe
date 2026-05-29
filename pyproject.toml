@@ -1,0 +1,17 @@
+[project]
+name = "kiosk-wpe"
+version = "0.1.0"
+description = "WPE/Cog kiosk browser block for Balena"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pre-commit-hooks==6.0.0",
+  "prek==0.3.13",
+  "yamllint==1.37.1",
+]
+
+[tool.uv]
+default-groups = []

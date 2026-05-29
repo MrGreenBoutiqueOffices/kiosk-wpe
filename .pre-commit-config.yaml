@@ -1,0 +1,52 @@
+---
+repos:
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: 🔍 golangci-lint
+        language: system
+        entry: golangci-lint run --fix
+        pass_filenames: false
+        types: [go]
+        stages: [commit, push, manual]
+      - id: go-fmt
+        name: 🐹 gofmt
+        language: system
+        entry: gofmt -l -w
+        types: [go]
+        stages: [commit, push, manual]
+      - id: check-case-conflict
+        name: 🔠 Check for case conflicts
+        language: system
+        entry: uv run prek run check-case-conflict
+        pass_filenames: false
+      - id: detect-private-key
+        name: 🕵️  Detect Private Keys
+        language: system
+        types: [text]
+        entry: uv run prek run detect-private-key
+      - id: end-of-file-fixer
+        name: ⮐  Fix End of Files
+        language: system
+        types: [text]
+        entry: uv run prek run end-of-file-fixer
+        stages: [commit, push, manual]
+      - id: no-commit-to-branch
+        name: 🛑 Don't commit to main branch
+        language: system
+        entry: uv run prek run no-commit-to-branch
+        pass_filenames: false
+        always_run: true
+        args:
+          - --branch=main
+      - id: trailing-whitespace
+        name: ✄  Trim Trailing Whitespace
+        language: system
+        types: [text]
+        entry: uv run prek run trailing-whitespace
+        stages: [commit, push, manual]
+      - id: yamllint
+        name: 🎗 Check YAML files with yamllint
+        language: system
+        types: [yaml]
+        entry: uv run yamllint .
