@@ -4,4 +4,16 @@
 .idea/
 .DS_Store
 
+# Python dev tooling
+.venv/
+.uv-cache/
+.uv_cache/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# Dev / docs
+examples/
+AGENTS.md
+
 *.log
