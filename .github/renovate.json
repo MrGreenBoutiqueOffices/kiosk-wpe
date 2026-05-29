@@ -44,10 +44,11 @@
     {
       "matchManagers": ["github-actions"],
       "groupName": "github actions",
-      "groupSlug": "github-actions"
+      "groupSlug": "github-actions",
+      "automerge": true
     },
     {
-      "matchManagers": ["github-actions", "dockerfile", "gomod", "pep621"],
+      "matchManagers": ["dockerfile", "gomod", "pep621"],
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
     }
