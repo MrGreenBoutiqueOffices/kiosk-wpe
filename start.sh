@@ -3,6 +3,7 @@ set -eu
 
 export LAUNCH_URL="${LAUNCH_URL:-about:blank}"
 export KIOSK_API_PORT="${KIOSK_API_PORT:-5011}"
+export NO_AT_BRIDGE=1
 
 if [ -z "${COG_PLATFORM_PARAMS:-}" ]; then
     case "${ROTATE_DISPLAY:-}" in
