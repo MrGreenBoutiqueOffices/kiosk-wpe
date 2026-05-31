@@ -144,10 +144,10 @@ func cogDBus(method string, args ...string) error {
 	return err
 }
 
-// cogDBusList logs all names registered on the session bus — used at startup to
-// verify whether Cog exposes a D-Bus interface in this build.
+// cogDBusList logs all names on the session bus and introspects the Cog service.
+// Used at startup to confirm the exact object path and interface Cog exposes.
 func cogDBusList() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "dbus-send", //nolint:gosec
 		"--session", "--print-reply",
@@ -160,6 +160,23 @@ func cogDBusList() {
 		return
 	}
 	log.Printf("D-Bus session names:\n%s", strings.TrimSpace(string(out)))
+
+	// Introspect Cog's root object to discover the correct object path and methods.
+	for _, path := range []string{"/com/igalia/Cog", "/com/igalia/Cog/Shell", "/"} {
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		iout, ierr := exec.CommandContext(ctx2, "dbus-send", //nolint:gosec
+			"--session", "--print-reply",
+			"--dest=com.igalia.Cog",
+			path,
+			"org.freedesktop.DBus.Introspectable.Introspect",
+		).Output()
+		cancel2()
+		if ierr == nil {
+			log.Printf("D-Bus introspect %s:\n%s", path, strings.TrimSpace(string(iout)))
+			break
+		}
+		log.Printf("D-Bus introspect %s failed: %v", path, ierr)
+	}
 }
 
 func getCogVersion() string {
