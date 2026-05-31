@@ -139,8 +139,10 @@ func reapplyTouchCalibration() {
 // Requires DBUS_SESSION_BUS_ADDRESS to be set (done by start.sh).
 func cogNavigate(url string) error {
 	// GVariant text format: array-of-strings, hint string, empty platform-data dict.
-	// http/https/about: URLs never contain single quotes, but escape defensively.
-	uris := fmt.Sprintf("['%s']", strings.ReplaceAll(url, "'", "%27"))
+	// Escape backslashes before single quotes so neither can break the string literal.
+	escaped := strings.ReplaceAll(url, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "'", `\'`)
+	uris := fmt.Sprintf("['%s']", escaped)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gdbus", "call", //nolint:gosec

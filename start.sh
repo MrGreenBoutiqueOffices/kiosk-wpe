@@ -24,8 +24,8 @@ echo "  API PORT           = ${KIOSK_API_PORT}"
 echo "  DBUS_SESSION_BUS_ADDRESS = ${DBUS_SESSION_BUS_ADDRESS:-<unset>}"
 echo "========================="
 
-# Start a D-Bus session daemon so kiosk_controller can send IPC commands to Cog
-# (LoadURI, Reload) without restarting the process.
+# Start a D-Bus session daemon so kiosk_controller can send navigation commands
+# to Cog via org.gtk.Application.Open without restarting the process.
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
     _dbus_addr=$(dbus-daemon --session --print-address --fork 2>/dev/null) || true
     if [ -n "${_dbus_addr:-}" ]; then
