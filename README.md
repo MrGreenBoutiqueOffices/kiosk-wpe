@@ -101,9 +101,8 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | `GET` | `/url` | Current URL as plain text |
 | `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog |
 | `POST` | `/refresh` | Restart Cog with the current URL |
-| `GET` | `/status` | JSON: `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
+| `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
 | `GET` | `/health` | Always 200 OK while the controller process is alive |
-| `GET` | `/ready` | `200 {"ready":true}` once Cog is stable; `503 {"ready":false}` while starting up |
 
 ```sh
 # Current URL
@@ -117,24 +116,8 @@ curl -X POST http://<device>:5011/url \
 # Reload
 curl -X POST http://<device>:5011/refresh
 
-# Diagnostics (includes uptime, cog version, last crash time)
+# Diagnostics (includes uptime, cog version, last crash time, readiness)
 curl http://<device>:5011/status
-
-# Wait in a script until the kiosk is ready
-until curl -sf http://<device>:5011/ready; do sleep 2; done
-```
-
-## Healthcheck
-
-Add to your `docker-compose.yml` to let Docker track kiosk readiness:
-
-```yaml
-healthcheck:
-  test: ["CMD", "wget", "-qO-", "--spider", "http://localhost:5011/ready"]
-  interval: 10s
-  timeout: 3s
-  retries: 6
-  start_period: 30s
 ```
 
 ## Development

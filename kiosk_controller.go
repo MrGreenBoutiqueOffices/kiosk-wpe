@@ -207,12 +207,6 @@ func (k *Kiosk) CurrentURL() string {
 	return k.currentURL
 }
 
-// IsReady reports whether Cog has been running stably for at least one poll cycle.
-func (k *Kiosk) IsReady() bool {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return k.ready
-}
 
 // Supervise watches Cog in a loop; restarts with exponential backoff on crashes.
 func (k *Kiosk) Supervise() {
@@ -267,8 +261,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case "/health":
 		h.handleHealth(w, r)
-	case "/ready":
-		h.handleReady(w, r)
 	default:
 		sendJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 	}
@@ -338,18 +330,6 @@ func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	h.kiosk.mu.Unlock()
 	sendJSON(w, http.StatusOK, status)
-}
-
-func (h *handler) handleReady(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		sendJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
-		return
-	}
-	if h.kiosk.IsReady() {
-		sendJSON(w, http.StatusOK, map[string]bool{"ready": true})
-	} else {
-		sendJSON(w, http.StatusServiceUnavailable, map[string]bool{"ready": false})
-	}
 }
 
 func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
