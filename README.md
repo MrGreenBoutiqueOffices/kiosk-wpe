@@ -99,8 +99,9 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/url` | Current URL as plain text |
-| `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog (async, returns 200 immediately). Only `http://`, `https://`, and `about:` schemes accepted. |
-| `POST` | `/refresh` | Restart Cog with the current URL (async, returns 200 immediately) |
+| `POST` | `/url` | `{"url": "https://..."}` — navigate via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. Only `http://`, `https://`, and `about:` schemes accepted. |
+| `POST` | `/refresh` | Re-navigate to the current URL via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. |
+| `POST` | `/restart` | Fully restart Cog and re-apply touch calibration (async, returns 200 immediately). Use when Cog is in a bad state. |
 | `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
 | `GET` | `/health` | 200 OK while healthy; 503 when `crash_count` exceeds 5 (crash loop detected) |
 
@@ -108,13 +109,16 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 # Current URL
 curl http://<device>:5011/url
 
-# Navigate
+# Navigate (no Cog restart)
 curl -X POST http://<device>:5011/url \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 
-# Reload
+# Soft reload (no Cog restart)
 curl -X POST http://<device>:5011/refresh
+
+# Hard restart (re-applies touch calibration)
+curl -X POST http://<device>:5011/restart
 
 # Diagnostics (includes uptime, cog version, last crash time, readiness)
 curl http://<device>:5011/status
@@ -171,7 +175,9 @@ uv run pre-commit run
 ## Runtime notes
 
 - The controller is a static Go binary — no runtime dependencies in the image.
-- Cog and all its WPE subprocesses run in their own process group; on restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.
+- URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
+- After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
+- Cog and all its WPE subprocesses run in their own process group; on a hard restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.
 - A 500 ms settle delay after stopping Cog prevents "Cannot set mode (Permission denied)" DRM errors when using the `gles` renderer.
 - Cog crashes are detected instantly (via process exit channel) and restarted with exponential backoff (max 30 s). The crash counter resets only after 30 s of stable uptime.
 - `/health` returns 503 when `crash_count` exceeds 5, signalling a crash loop to external monitors.
