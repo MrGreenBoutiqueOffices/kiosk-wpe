@@ -136,7 +136,30 @@ func cogDBus(method string, args ...string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "dbus-send", params...).Run() //nolint:gosec
+	cmd := exec.CommandContext(ctx, "dbus-send", params...) //nolint:gosec
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) > 0 {
+		log.Printf("dbus-send: %s", strings.TrimSpace(string(out)))
+	}
+	return err
+}
+
+// cogDBusList logs all names registered on the session bus — used at startup to
+// verify whether Cog exposes a D-Bus interface in this build.
+func cogDBusList() {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "dbus-send", //nolint:gosec
+		"--session", "--print-reply",
+		"--dest=org.freedesktop.DBus",
+		"/org/freedesktop/DBus",
+		"org.freedesktop.DBus.ListNames",
+	).Output()
+	if err != nil {
+		log.Printf("D-Bus ListNames failed: %v", err)
+		return
+	}
+	log.Printf("D-Bus session names:\n%s", strings.TrimSpace(string(out)))
 }
 
 func getCogVersion() string {
@@ -500,6 +523,11 @@ func main() {
 	k := newKiosk()
 	k.start()
 	go k.Supervise()
+	// Probe D-Bus after Cog has had time to register its service.
+	go func() {
+		time.Sleep(5 * time.Second)
+		cogDBusList()
+	}()
 
 	port := envOr("KIOSK_API_PORT", "5011")
 	addr := "0.0.0.0:" + port
