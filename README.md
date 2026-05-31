@@ -5,7 +5,7 @@ WPE/Cog kiosk browser block for Balena. Runs a fullscreen browser on a DRM displ
 ## Features
 
 - 🖥️ Fullscreen WPE/Cog browser on DRM/KMS display — no X11 or Wayland compositor required
-- 🌐 HTTP API for URL navigation, reload, status, and health checks
+- 🌐 HTTP API for URL navigation, reload, status, health, and screenshot
 - 🔄 Display rotation with automatic touch coordinate calibration via udev hwdb
 - 🔁 Automatic crash recovery with exponential backoff (up to 30 s)
 - 💾 URL persistence across Cog restarts
@@ -103,6 +103,7 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | `POST` | `/refresh` | Restart Cog with the current URL |
 | `GET` | `/status` | JSON: `url`, `running`, `crash_count` |
 | `GET` | `/health` | Always 200 OK while the controller process is alive |
+| `GET` | `/screenshot` | Current screen as PNG (requires `/dev/fb0`; see [Screenshot](#screenshot)) |
 
 ```sh
 # Current URL
@@ -118,7 +119,18 @@ curl -X POST http://<device>:5011/refresh
 
 # Diagnostics
 curl http://<device>:5011/status
+
+# Save screenshot
+curl http://<device>:5011/screenshot -o screen.png
 ```
+
+## Screenshot
+
+`GET /screenshot` captures the current display and returns a PNG. It reads
+`/dev/fb0` (Linux legacy framebuffer) which requires the DRM driver to expose
+one. On Raspberry Pi 4 (vc4 driver) this works out of the box. The endpoint
+returns `503` when `/dev/fb0` is not available rather than failing the
+container.
 
 ## Development
 
