@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -122,61 +123,26 @@ type Kiosk struct {
 	stopOnce     sync.Once
 }
 
-// cogDBus sends a D-Bus method call to the running Cog instance via dbus-send.
-// It requires DBUS_SESSION_BUS_ADDRESS to be set (done by start.sh).
-func cogDBus(method string, args ...string) error {
-	params := []string{
-		"--session", "--print-reply",
-		"--dest=com.igalia.Cog",
-		"/com/igalia/Cog/Shell",
-		"com.igalia.Cog.Shell." + method,
-	}
-	for _, a := range args {
-		params = append(params, "string:"+a)
-	}
+// cogNavigate asks the running Cog instance to navigate to url via D-Bus,
+// using GApplication's standard Open method (org.gtk.Application.Open).
+// Requires DBUS_SESSION_BUS_ADDRESS to be set (done by start.sh).
+func cogNavigate(url string) error {
+	// GVariant format: array-of-strings, hint string, empty platform-data dict.
+	uris := fmt.Sprintf("['%s']", url)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "dbus-send", params...) //nolint:gosec
+	cmd := exec.CommandContext(ctx, "gdbus", "call", //nolint:gosec
+		"--session",
+		"--dest=com.igalia.Cog",
+		"--object-path=/com/igalia/Cog",
+		"--method=org.gtk.Application.Open",
+		uris, "", "{}",
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) > 0 {
-		log.Printf("dbus-send: %s", strings.TrimSpace(string(out)))
+		log.Printf("gdbus: %s", strings.TrimSpace(string(out)))
 	}
 	return err
-}
-
-// cogDBusList logs all names on the session bus and introspects the Cog service.
-// Used at startup to confirm the exact object path and interface Cog exposes.
-func cogDBusList() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "dbus-send", //nolint:gosec
-		"--session", "--print-reply",
-		"--dest=org.freedesktop.DBus",
-		"/org/freedesktop/DBus",
-		"org.freedesktop.DBus.ListNames",
-	).Output()
-	if err != nil {
-		log.Printf("D-Bus ListNames failed: %v", err)
-		return
-	}
-	log.Printf("D-Bus session names:\n%s", strings.TrimSpace(string(out)))
-
-	// Introspect Cog's root object to discover the correct object path and methods.
-	for _, path := range []string{"/com/igalia/Cog", "/com/igalia/Cog/Shell", "/"} {
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
-		iout, ierr := exec.CommandContext(ctx2, "dbus-send", //nolint:gosec
-			"--session", "--print-reply",
-			"--dest=com.igalia.Cog",
-			path,
-			"org.freedesktop.DBus.Introspectable.Introspect",
-		).Output()
-		cancel2()
-		if ierr == nil {
-			log.Printf("D-Bus introspect %s:\n%s", path, strings.TrimSpace(string(iout)))
-			break
-		}
-		log.Printf("D-Bus introspect %s failed: %v", path, ierr)
-	}
 }
 
 func getCogVersion() string {
@@ -293,8 +259,8 @@ func (k *Kiosk) SetURL(url string) {
 	k.saveURL()
 	k.mu.Unlock()
 
-	if err := cogDBus("LoadURI", url); err != nil {
-		log.Printf("D-Bus LoadURI failed (%v); falling back to restart", err)
+	if err := cogNavigate(url); err != nil {
+		log.Printf("D-Bus navigate failed (%v); falling back to restart", err)
 		k.Restart()
 	}
 }
@@ -306,7 +272,7 @@ func (k *Kiosk) Reload() {
 	url := k.currentURL
 	k.mu.Unlock()
 
-	if err := cogDBus("LoadURI", url); err != nil {
+	if err := cogNavigate(url); err != nil {
 		log.Printf("D-Bus reload failed (%v); falling back to restart", err)
 		k.Restart()
 	}
@@ -540,11 +506,6 @@ func main() {
 	k := newKiosk()
 	k.start()
 	go k.Supervise()
-	// Probe D-Bus after Cog has had time to register its service.
-	go func() {
-		time.Sleep(5 * time.Second)
-		cogDBusList()
-	}()
 
 	port := envOr("KIOSK_API_PORT", "5011")
 	addr := "0.0.0.0:" + port

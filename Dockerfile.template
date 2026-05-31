@@ -15,6 +15,7 @@ RUN printf 'path-exclude=/usr/share/doc/*\npath-exclude=/usr/share/man/*\npath-e
         cog=0.18.4-1+b1 \
         dbus \
         fonts-dejavu-core \
+        libglib2.0-bin \
         libgbm1 \
         libgles2 \
         libwpebackend-fdo-1.0-1 \
