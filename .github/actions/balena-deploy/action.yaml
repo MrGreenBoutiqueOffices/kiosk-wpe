@@ -1,0 +1,53 @@
+name: Balena deploy
+description: Composite action to update block version metadata and deploy to a Balena fleet.
+
+inputs:
+  version:
+    description: Version string to embed in balena.yml and deploy.
+    required: true
+  fleet:
+    description: Balena fleet slug to target.
+    required: true
+  balena_token:
+    description: Balena API token with deploy permissions.
+    required: true
+  note:
+    description: Markdown note to attach to the Balena release.
+    required: true
+  balena_manifest_path:
+    description: Relative path to the balena.yml manifest.
+    default: balena.yml
+    required: false
+
+outputs:
+  balena_release_version:
+    description: Version produced by the Balena deploy action.
+    value: ${{ steps.deploy.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Update version in manifest
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        MANIFEST_PATH: ${{ inputs.balena_manifest_path }}
+      run: |
+        set -euo pipefail
+        if [[ ! -f "${MANIFEST_PATH}" ]]; then
+          echo "Manifest ${MANIFEST_PATH} does not exist" >&2
+          exit 1
+        fi
+        sed -i "s/^version:.*/version: \"${VERSION}\"/" "${MANIFEST_PATH}"
+        echo "Updated ${MANIFEST_PATH}:"
+        cat "${MANIFEST_PATH}"
+    - name: Deploy to Balena Fleet
+      id: deploy
+      uses: balena-io/deploy-to-balena-action@v2.2.12
+      with:
+        balena_token: ${{ inputs.balena_token }}
+        fleet: ${{ inputs.fleet }}
+        note: ${{ inputs.note }}
+    - name: Log release built version
+      shell: bash
+      run: echo "Built release version ${{ steps.deploy.outputs.version }}"

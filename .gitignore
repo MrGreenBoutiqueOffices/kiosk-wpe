@@ -3,6 +3,10 @@ kiosk_controller
 *.exe
 *.out
 
+# Python cache
+__pycache__/
+*.py[cod]
+
 # Environment
 .env
 .env.*
