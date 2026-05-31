@@ -372,7 +372,7 @@ func (h *handler) handleURL(w http.ResponseWriter, r *http.Request) {
 		}
 		// Run asynchronously: stopping + starting Cog blocks for ~500 ms+.
 		go h.kiosk.SetURL(url)
-		sendJSON(w, http.StatusAccepted, map[string]string{"url": url})
+		sendJSON(w, http.StatusOK, map[string]string{"url": url})
 	default:
 		sendJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 	}
@@ -384,7 +384,7 @@ func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go h.kiosk.Restart()
-	sendJSON(w, http.StatusAccepted, map[string]string{"status": "ok"})
+	sendJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {

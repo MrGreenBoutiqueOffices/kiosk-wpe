@@ -99,8 +99,8 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/url` | Current URL as plain text |
-| `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog (202 Accepted, async). Only `http://`, `https://`, and `about:` schemes accepted. |
-| `POST` | `/refresh` | Restart Cog with the current URL (202 Accepted, async) |
+| `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog (async, returns 200 immediately). Only `http://`, `https://`, and `about:` schemes accepted. |
+| `POST` | `/refresh` | Restart Cog with the current URL (async, returns 200 immediately) |
 | `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
 | `GET` | `/health` | 200 OK while healthy; 503 when `crash_count` exceeds 5 (crash loop detected) |
 
