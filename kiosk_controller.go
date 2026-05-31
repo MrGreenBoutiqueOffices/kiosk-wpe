@@ -81,15 +81,31 @@ func (p *proc) stop() {
 
 // Kiosk manages the Cog subprocess and the active URL.
 type Kiosk struct {
-	mu         sync.Mutex
-	process    *proc
-	currentURL string
-	stopping   bool
-	crashCount int
+	mu           sync.Mutex
+	process      *proc
+	currentURL   string
+	stopping     bool
+	crashCount   int
+	startedAt    time.Time
+	cogStartedAt *time.Time
+	lastCrashAt  *time.Time
+	ready        bool
+	cogVersion   string
+}
+
+func getCogVersion() string {
+	out, err := exec.Command("cog", "--version").Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func newKiosk() *Kiosk {
-	k := &Kiosk{}
+	k := &Kiosk{
+		startedAt:  time.Now(),
+		cogVersion: getCogVersion(),
+	}
 	k.currentURL = k.loadURL()
 	return k
 }
@@ -137,6 +153,8 @@ func (k *Kiosk) start() {
 		log.Printf("Failed to start Cog: %v", err)
 		return
 	}
+	now := time.Now()
+	k.cogStartedAt = &now
 	k.process = p
 }
 
@@ -189,6 +207,7 @@ func (k *Kiosk) CurrentURL() string {
 	return k.currentURL
 }
 
+
 // Supervise watches Cog in a loop; restarts with exponential backoff on crashes.
 func (k *Kiosk) Supervise() {
 	for {
@@ -200,10 +219,15 @@ func (k *Kiosk) Supervise() {
 		}
 		running := k.process != nil && k.process.running()
 		if running {
+			if !k.ready {
+				k.ready = true
+			}
 			k.crashCount = 0
 			k.mu.Unlock()
 			continue
 		}
+		now := time.Now()
+		k.lastCrashAt = &now
 		k.crashCount++
 		count := k.crashCount
 		k.mu.Unlock()
@@ -281,11 +305,31 @@ func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 		return
 	}
-	sendJSON(w, http.StatusOK, map[string]any{
-		"url":         h.kiosk.CurrentURL(),
-		"running":     h.kiosk.IsRunning(),
-		"crash_count": h.kiosk.CrashCount(),
-	})
+	h.kiosk.mu.Lock()
+	now := time.Now()
+	var lastCrash *string
+	if h.kiosk.lastCrashAt != nil {
+		s := h.kiosk.lastCrashAt.UTC().Format(time.RFC3339)
+		lastCrash = &s
+	}
+	var cogStarted *string
+	if h.kiosk.cogStartedAt != nil {
+		s := h.kiosk.cogStartedAt.UTC().Format(time.RFC3339)
+		cogStarted = &s
+	}
+	status := map[string]any{
+		"url":            h.kiosk.currentURL,
+		"running":        h.kiosk.process != nil && h.kiosk.process.running(),
+		"crash_count":    h.kiosk.crashCount,
+		"ready":          h.kiosk.ready,
+		"started_at":     h.kiosk.startedAt.UTC().Format(time.RFC3339),
+		"uptime_seconds": int(now.Sub(h.kiosk.startedAt).Seconds()),
+		"cog_started_at": cogStarted,
+		"last_crash_at":  lastCrash,
+		"cog_version":    h.kiosk.cogVersion,
+	}
+	h.kiosk.mu.Unlock()
+	sendJSON(w, http.StatusOK, status)
 }
 
 func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {

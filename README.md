@@ -101,7 +101,7 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | `GET` | `/url` | Current URL as plain text |
 | `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog |
 | `POST` | `/refresh` | Restart Cog with the current URL |
-| `GET` | `/status` | JSON: `url`, `running`, `crash_count` |
+| `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
 | `GET` | `/health` | Always 200 OK while the controller process is alive |
 
 ```sh
@@ -116,7 +116,7 @@ curl -X POST http://<device>:5011/url \
 # Reload
 curl -X POST http://<device>:5011/refresh
 
-# Diagnostics
+# Diagnostics (includes uptime, cog version, last crash time, readiness)
 curl http://<device>:5011/status
 ```
 
