@@ -13,6 +13,7 @@ RUN printf 'path-exclude=/usr/share/doc/*\npath-exclude=/usr/share/man/*\npath-e
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         cog=0.18.4-1+b1 \
+        dbus \
         fonts-dejavu-core \
         libgbm1 \
         libgles2 \
