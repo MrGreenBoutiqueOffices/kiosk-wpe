@@ -16,7 +16,7 @@ jobs:
   deploy_pr:
     name: Deploy PR build
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.event.pull_request.head.ref, 'renovate/') || contains(github.event.pull_request.labels.*.name, 'deploy-pr') }} # yamllint disable-line rule:line-length
+    if: ${{ github.event.action != 'closed' && (!contains(github.event.pull_request.head.ref, 'renovate/') || contains(github.event.pull_request.labels.*.name, 'deploy-pr')) }} # yamllint disable-line rule:line-length
     steps:
       - name: Check out code
         uses: actions/checkout@v6.0.2
@@ -56,8 +56,7 @@ jobs:
   cleanup_temporary_releases:
     name: Cleanup PR releases
     runs-on: ubuntu-latest
-    needs: deploy_pr
-    if: ${{ github.event.pull_request.state == 'closed' }}
+    if: ${{ github.event.action == 'closed' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v6.0.2
