@@ -19,3 +19,8 @@ services:
       - LAUNCH_URL=https://example.com
       # - ROTATE_DISPLAY=right
       # - TOUCH_DEVICE=*Waveshare*
+    volumes:
+      - browser-data:/data
+
+volumes:
+  browser-data:
