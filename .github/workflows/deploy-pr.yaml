@@ -16,7 +16,7 @@ jobs:
   deploy_pr:
     name: Deploy PR build
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.event.pull_request.head.ref, 'renovate/') || contains(github.event.pull_request.labels.*.name, 'deploy-pr') }}
+    if: ${{ !contains(github.event.pull_request.head.ref, 'renovate/') || contains(github.event.pull_request.labels.*.name, 'deploy-pr') }} # yamllint disable-line rule:line-length
     steps:
       - name: Check out code
         uses: actions/checkout@v6.0.2

@@ -1,3 +1,4 @@
+---
 name: Balena deploy
 description: Composite action to update block version metadata and deploy to a Balena fleet.
 
