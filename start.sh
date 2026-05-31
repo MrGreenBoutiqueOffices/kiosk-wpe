@@ -21,7 +21,20 @@ echo "  COG_EXTRA_ARGS     = ${COG_EXTRA_ARGS:-<unset>}"
 echo "  IGNORE_TLS_ERRORS  = ${IGNORE_TLS_ERRORS:-<unset>}"
 echo "  TOUCH_DEVICE       = ${TOUCH_DEVICE:-<unset>}"
 echo "  API PORT           = ${KIOSK_API_PORT}"
+echo "  DBUS_SESSION_BUS_ADDRESS = ${DBUS_SESSION_BUS_ADDRESS:-<unset>}"
 echo "========================="
+
+# Start a D-Bus session daemon so kiosk_controller can send navigation commands
+# to Cog via org.gtk.Application.Open without restarting the process.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    _dbus_addr=$(dbus-daemon --session --print-address --fork 2>/dev/null) || true
+    if [ -n "${_dbus_addr:-}" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="${_dbus_addr}"
+        echo "D-Bus session bus started: ${DBUS_SESSION_BUS_ADDRESS}"
+    else
+        echo "WARNING: dbus-daemon failed to start — URL changes will fall back to Cog restart" >&2
+    fi
+fi
 
 # Start udev so libinput can enumerate input devices.
 # io.balena.features.udev does not reliably mount /run/udev on all Balena OS versions.

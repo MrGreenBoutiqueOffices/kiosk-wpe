@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -122,6 +123,42 @@ type Kiosk struct {
 	stopOnce     sync.Once
 }
 
+// reapplyTouchCalibration re-triggers udev so libinput picks up the hwdb
+// calibration matrix on any input device that was opened since the last trigger.
+// A no-op when TOUCH_DEVICE is not set.
+func reapplyTouchCalibration() {
+	if os.Getenv("TOUCH_DEVICE") == "" {
+		return
+	}
+	_ = exec.Command("udevadm", "trigger", "--action=change", "--type=devices", "--subsystem-match=input").Run() //nolint:gosec
+	_ = exec.Command("udevadm", "settle", "--timeout=3").Run()                                                    //nolint:gosec
+}
+
+// cogNavigate asks the running Cog instance to navigate to url via D-Bus,
+// using GApplication's standard Open method (org.gtk.Application.Open).
+// Requires DBUS_SESSION_BUS_ADDRESS to be set (done by start.sh).
+func cogNavigate(url string) error {
+	// GVariant text format: array-of-strings, hint string, empty platform-data dict.
+	// Escape backslashes before single quotes so neither can break the string literal.
+	escaped := strings.ReplaceAll(url, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "'", `\'`)
+	uris := fmt.Sprintf("['%s']", escaped)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gdbus", "call", //nolint:gosec
+		"--session",
+		"--dest=com.igalia.Cog",
+		"--object-path=/com/igalia/Cog",
+		"--method=org.gtk.Application.Open",
+		uris, "", "{}",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) > 0 {
+		log.Printf("gdbus: %s", strings.TrimSpace(string(out)))
+	}
+	return err
+}
+
 func getCogVersion() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -215,6 +252,7 @@ func (k *Kiosk) Restart() {
 	// Allow the kernel to fully release the DRM master lock before the next
 	// Cog process tries to claim it; without this the gles renderer gets EPERM.
 	time.Sleep(drmSettleDelay)
+	reapplyTouchCalibration()
 	k.start()
 
 	k.mu.Lock()
@@ -222,13 +260,43 @@ func (k *Kiosk) Restart() {
 	k.mu.Unlock()
 }
 
-// SetURL navigates to a new URL, persists it, and restarts Cog asynchronously.
+// SetURL persists a new URL and navigates Cog to it via D-Bus.
+// Falls back to a full restart when D-Bus is unavailable.
 func (k *Kiosk) SetURL(url string) {
 	k.mu.Lock()
 	k.currentURL = url
 	k.saveURL()
 	k.mu.Unlock()
-	k.Restart()
+
+	if err := cogNavigate(url); err != nil {
+		log.Printf("D-Bus navigate failed (%v); falling back to restart", err)
+		k.Restart()
+		return
+	}
+	// WPEWebProcess opens the input device shortly after navigation starts;
+	// re-trigger udev so libinput picks up the hwdb calibration matrix.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		reapplyTouchCalibration()
+	}()
+}
+
+// Reload re-navigates Cog to the current URL via D-Bus without restarting the process.
+// Falls back to a full restart when D-Bus is unavailable.
+func (k *Kiosk) Reload() {
+	k.mu.Lock()
+	url := k.currentURL
+	k.mu.Unlock()
+
+	if err := cogNavigate(url); err != nil {
+		log.Printf("D-Bus reload failed (%v); falling back to restart", err)
+		k.Restart()
+		return
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		reapplyTouchCalibration()
+	}()
 }
 
 // CurrentURL returns the active URL.
@@ -330,6 +398,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleURL(w, r)
 	case "/refresh":
 		h.handleRefresh(w, r)
+	case "/restart":
+		h.handleRestart(w, r)
 	case "/status":
 		h.handleStatus(w, r)
 	case "/health":
@@ -370,7 +440,7 @@ func (h *handler) handleURL(w http.ResponseWriter, r *http.Request) {
 			sendJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_url_scheme"})
 			return
 		}
-		// Run asynchronously: stopping + starting Cog blocks for ~500 ms+.
+		// Run asynchronously: D-Bus call or fallback restart both block briefly.
 		go h.kiosk.SetURL(url)
 		sendJSON(w, http.StatusOK, map[string]string{"url": url})
 	default:
@@ -378,7 +448,18 @@ func (h *handler) handleURL(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleRefresh re-navigates Cog to the current URL without restarting the process.
 func (h *handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
+		return
+	}
+	go h.kiosk.Reload()
+	sendJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleRestart fully stops and restarts Cog, re-applying touch calibration.
+func (h *handler) handleRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		sendJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 		return
