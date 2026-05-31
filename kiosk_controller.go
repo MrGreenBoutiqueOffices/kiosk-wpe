@@ -110,8 +110,8 @@ type Kiosk struct {
 	mu           sync.Mutex
 	process      *proc
 	currentURL   string
-	stopping     bool
-	restarting   bool      // true during an intentional Restart/SetURL
+	stopping    bool
+	restarting  int // counts in-flight intentional restarts; only 0 when all callers finished
 	crashCount   int
 	startedAt    time.Time
 	cogStartedAt time.Time // zero value = Cog not yet started
@@ -208,7 +208,7 @@ func (k *Kiosk) stop() {
 func (k *Kiosk) Restart() {
 	k.mu.Lock()
 	k.crashCount = 0
-	k.restarting = true
+	k.restarting++
 	k.mu.Unlock()
 
 	k.stop()
@@ -218,7 +218,7 @@ func (k *Kiosk) Restart() {
 	k.start()
 
 	k.mu.Lock()
-	k.restarting = false
+	k.restarting--
 	k.mu.Unlock()
 }
 
@@ -283,7 +283,7 @@ func (k *Kiosk) Supervise() {
 		}
 
 		// Process stopped — not a crash if an intentional restart is in progress.
-		if k.restarting {
+		if k.restarting > 0 {
 			k.mu.Unlock()
 			continue
 		}
@@ -341,9 +341,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // validURL only allows safe URL schemes to prevent file:// or javascript: injection.
 func validURL(u string) bool {
-	return strings.HasPrefix(u, "http://") ||
-		strings.HasPrefix(u, "https://") ||
-		strings.HasPrefix(u, "about:")
+	s := strings.ToLower(u)
+	return strings.HasPrefix(s, "http://") ||
+		strings.HasPrefix(s, "https://") ||
+		strings.HasPrefix(s, "about:")
 }
 
 func (h *handler) handleURL(w http.ResponseWriter, r *http.Request) {
