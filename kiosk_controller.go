@@ -2,20 +2,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"image"
-	"image/color"
-	"image/png"
-	"io"
 	"log"
 	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -228,54 +221,6 @@ func (k *Kiosk) Stop() {
 	k.stopping = true
 	k.mu.Unlock()
 	k.stop()
-}
-
-// --- Screenshot ---
-
-// captureScreenshot reads the Linux framebuffer (/dev/fb0) and returns a PNG.
-// Requires the DRM driver to expose a legacy framebuffer. Returns an error when
-// /dev/fb0 is not available so callers can return 503 instead of panicking.
-func captureScreenshot() ([]byte, error) {
-	sizeRaw, err := os.ReadFile("/sys/class/graphics/fb0/virtual_size")
-	if err != nil {
-		return nil, fmt.Errorf("framebuffer not available: %w", err)
-	}
-	parts := strings.SplitN(strings.TrimSpace(string(sizeRaw)), ",", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("unexpected virtual_size format: %q", strings.TrimSpace(string(sizeRaw)))
-	}
-	width, err1 := strconv.Atoi(parts[0])
-	height, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil || width <= 0 || height <= 0 {
-		return nil, fmt.Errorf("cannot parse framebuffer dimensions from %q", strings.TrimSpace(string(sizeRaw)))
-	}
-
-	f, err := os.Open("/dev/fb0") //nolint:gosec
-	if err != nil {
-		return nil, fmt.Errorf("cannot open framebuffer: %w", err)
-	}
-	defer f.Close()
-
-	stride := width * 4 // 32 bpp
-	raw := make([]byte, height*stride)
-	if _, err := io.ReadFull(f, raw); err != nil {
-		return nil, fmt.Errorf("cannot read framebuffer (%dx%d): %w", width, height, err)
-	}
-
-	// Linux framebuffer is typically BGRA — swap R and B channels for image/png.
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			i := (y*width + x) * 4
-			img.SetRGBA(x, y, color.RGBA{R: raw[i+2], G: raw[i+1], B: raw[i+0], A: raw[i+3]})
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		return nil, fmt.Errorf("png encode failed: %w", err)
-	}
-	return buf.Bytes(), nil
 }
 
 // --- HTTP handler ---
