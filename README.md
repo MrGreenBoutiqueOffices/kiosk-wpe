@@ -7,8 +7,8 @@ WPE/Cog kiosk browser block for Balena. Runs a fullscreen browser on a DRM displ
 - 🖥️ Fullscreen WPE/Cog browser on DRM/KMS display — no X11 or Wayland compositor required
 - 🌐 HTTP API for URL navigation, reload, status, and health checks
 - 🔄 Display rotation with automatic touch coordinate calibration via udev hwdb
-- 🔁 Automatic crash recovery with exponential backoff (up to 30 s)
-- 💾 URL persistence across Cog restarts
+- 🔁 Automatic crash recovery with exponential backoff (up to 30 s); instant detection via process exit channel
+- 💾 URL persistence in a named volume — survives Cog crashes, container restarts, and image updates
 - ⏳ Startup readiness check — waits for the target URL to be reachable before launching Cog
 
 ## Quick start
@@ -99,10 +99,10 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/url` | Current URL as plain text |
-| `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog |
-| `POST` | `/refresh` | Restart Cog with the current URL |
+| `POST` | `/url` | `{"url": "https://..."}` — navigate and restart Cog (202 Accepted, async). Only `http://`, `https://`, and `about:` schemes accepted. |
+| `POST` | `/refresh` | Restart Cog with the current URL (202 Accepted, async) |
 | `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
-| `GET` | `/health` | Always 200 OK while the controller process is alive |
+| `GET` | `/health` | 200 OK while healthy; 503 when `crash_count` exceeds 5 (crash loop detected) |
 
 ```sh
 # Current URL
@@ -171,9 +171,13 @@ uv run pre-commit run
 ## Runtime notes
 
 - The controller is a static Go binary — no runtime dependencies in the image.
-- Cog crashes are automatically restarted with exponential backoff (max 30 s).
-- udev is started in-container; `io.balena.features.udev` does not reliably mount `/run/udev` on all Balena OS versions.
-- The active URL is persisted across Cog restarts. `LAUNCH_URL` is only used when no persisted URL exists yet.
+- Cog and all its WPE subprocesses run in their own process group; on restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.
+- A 500 ms settle delay after stopping Cog prevents "Cannot set mode (Permission denied)" DRM errors when using the `gles` renderer.
+- Cog crashes are detected instantly (via process exit channel) and restarted with exponential backoff (max 30 s). The crash counter resets only after 30 s of stable uptime.
+- `/health` returns 503 when `crash_count` exceeds 5, signalling a crash loop to external monitors.
+- The active URL is persisted to `/data/kiosk-url` (a named Docker volume). It survives Cog crashes, container restarts, and image updates. `LAUNCH_URL` is only used when no persisted URL exists. Mount the `browser-data` volume at `/data` in your `docker-compose.yml`.
+- udev is started in-container; `io.balena.features.udev` does not reliably mount `/run/udev` on all Balena OS versions. A warning is logged to stderr if udev fails to start.
+- Setting `ROTATE_DISPLAY` without `TOUCH_DEVICE` logs a warning — touch coordinates will not be corrected for rotation.
 
 ## License
 

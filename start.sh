@@ -27,8 +27,11 @@ echo "========================="
 # io.balena.features.udev does not reliably mount /run/udev on all Balena OS versions.
 if [ ! -d /run/udev ]; then
     mkdir -p /run/udev
-    /lib/systemd/systemd-udevd --daemon --resolve-names=never 2>/dev/null || true
-    echo "udev started"
+    if /lib/systemd/systemd-udevd --daemon --resolve-names=never 2>/dev/null; then
+        echo "udev started"
+    else
+        echo "WARNING: udev failed to start — touch input may be unavailable" >&2
+    fi
 fi
 
 # Apply touch calibration via udev hwdb when TOUCH_DEVICE and ROTATE_DISPLAY are set.
@@ -46,14 +49,14 @@ if [ -n "${TOUCH_MATRIX}" ] && [ -n "${TOUCH_DEVICE:-}" ]; then
         > /etc/udev/hwdb.d/99-kiosk-touch.hwdb
     echo "Touch calibration: ${TOUCH_MATRIX} (device: ${TOUCH_DEVICE})"
 elif [ -n "${TOUCH_MATRIX}" ]; then
-    echo "Touch calibration skipped: set TOUCH_DEVICE to enable"
+    echo "WARNING: ROTATE_DISPLAY=${ROTATE_DISPLAY:-} is set but TOUCH_DEVICE is not — touch coordinates will not be corrected for rotation" >&2
     rm -f /etc/udev/hwdb.d/99-kiosk-touch.hwdb
 else
     rm -f /etc/udev/hwdb.d/99-kiosk-touch.hwdb
 fi
 udevadm hwdb --update 2>/dev/null || true
 udevadm trigger --type=devices --subsystem-match=input 2>/dev/null || true
-udevadm settle --timeout=3 2>/dev/null || true
+udevadm settle --timeout=5 2>/dev/null || true
 
 # Log detected input device names to help configure TOUCH_DEVICE.
 echo "Detected input devices:"
