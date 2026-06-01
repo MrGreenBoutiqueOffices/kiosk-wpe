@@ -211,14 +211,21 @@ func (k *Kiosk) buildArgs() []string {
 
 func (k *Kiosk) start() {
 	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.stopping {
+	if k.stopping || (k.process != nil && k.process.running()) {
+		k.mu.Unlock()
 		return
 	}
-	if k.process != nil && k.process.running() {
-		return
-	}
+	k.mu.Unlock()
+
+	// Run calibration outside the lock: udevadm settle can block for seconds.
 	reapplyTouchCalibration()
+
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	// Re-check after calibration in case Stop() or a concurrent start() raced.
+	if k.stopping || (k.process != nil && k.process.running()) {
+		return
+	}
 	args := k.buildArgs()
 	log.Printf("Starting Cog: %s", strings.Join(args, " "))
 	p, err := launch(args)
