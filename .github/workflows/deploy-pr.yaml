@@ -19,7 +19,7 @@ jobs:
     if: ${{ github.event.action != 'closed' && (!contains(github.event.pull_request.head.ref, 'renovate/') || contains(github.event.pull_request.labels.*.name, 'deploy-pr')) }} # yamllint disable-line rule:line-length
     steps:
       - name: Check out code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Generate version
         id: generate
         shell: bash
@@ -59,7 +59,7 @@ jobs:
     if: ${{ github.event.action == 'closed' }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v6.0.3
       - name: Set up Python
         uses: actions/setup-python@v6.2.0
       - name: Install cleanup dependencies
