@@ -66,31 +66,20 @@ case "${ROTATE_DISPLAY:-}" in
     *)            TOUCH_MATRIX="" ;;
 esac
 
-# Inject touch calibration directly into the udev runtime database so libinput
-# picks it up regardless of whether the host or container udev is active.
-# The hwdb approach does not work when the host udev socket is mounted
-# (privileged containers on Balena always get the host /run/udev).
+# Write a libinput quirks file for touch calibration.
+# libinput reads /etc/libinput/local-overrides.quirks directly when opening a
+# device — this works regardless of whether host or container udev is active.
+mkdir -p /etc/libinput
 if [ -n "${TOUCH_MATRIX}" ] && [ -n "${TOUCH_DEVICE:-}" ]; then
-    _calibrated=0
-    for _event_dir in /sys/class/input/event*; do
-        _dev_name=$(cat "${_event_dir}/device/name" 2>/dev/null) || continue
-        case "${_dev_name}" in
-            ${TOUCH_DEVICE})
-                _dev_num=$(cat "${_event_dir}/dev" 2>/dev/null) || continue
-                _db_file="/run/udev/data/c${_dev_num}"
-                grep -v "^E:LIBINPUT_CALIBRATION_MATRIX=" "${_db_file}" 2>/dev/null > "${_db_file}.tmp" || true
-                mv "${_db_file}.tmp" "${_db_file}"
-                printf 'E:LIBINPUT_CALIBRATION_MATRIX=%s\n' "${TOUCH_MATRIX}" >> "${_db_file}"
-                echo "Touch calibration injected: ${TOUCH_MATRIX} (device: ${_dev_name}, db: ${_db_file})"
-                _calibrated=1
-                ;;
-        esac
-    done
-    if [ "${_calibrated}" -eq 0 ]; then
-        echo "WARNING: No device matching '${TOUCH_DEVICE}' found — touch coordinates will not be corrected" >&2
-    fi
+    printf '[Kiosk touch calibration]\nMatchName=%s\nAttrCalibrationMatrix=%s\n' \
+        "${TOUCH_DEVICE}" "${TOUCH_MATRIX}" \
+        > /etc/libinput/local-overrides.quirks
+    echo "Touch calibration quirk: ${TOUCH_MATRIX} (device pattern: ${TOUCH_DEVICE})"
 elif [ -n "${TOUCH_MATRIX}" ]; then
+    rm -f /etc/libinput/local-overrides.quirks
     echo "WARNING: ROTATE_DISPLAY=${ROTATE_DISPLAY:-} is set but TOUCH_DEVICE is not — touch coordinates will not be corrected for rotation" >&2
+else
+    rm -f /etc/libinput/local-overrides.quirks
 fi
 
 # Log detected input device names to help configure TOUCH_DEVICE.
