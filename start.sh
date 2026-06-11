@@ -53,11 +53,6 @@ if [ ! -d /run/udev ]; then
     fi
 fi
 
-# Enumerate input devices so the udev runtime database is populated before
-# we attempt to inject the calibration property.
-udevadm trigger --type=devices --subsystem-match=input 2>/dev/null || true
-udevadm settle --timeout=5 2>/dev/null || true
-
 # Determine the calibration matrix for the configured rotation.
 case "${ROTATE_DISPLAY:-}" in
     inverted|180) TOUCH_MATRIX="-1 0 1 0 -1 1" ;;
@@ -66,21 +61,27 @@ case "${ROTATE_DISPLAY:-}" in
     *)            TOUCH_MATRIX="" ;;
 esac
 
-# Write a libinput quirks file for touch calibration.
-# libinput reads /etc/libinput/local-overrides.quirks directly when opening a
-# device — this works regardless of whether host or container udev is active.
-mkdir -p /etc/libinput
+# Write a udev rules file so the container's own udevd sets
+# LIBINPUT_CALIBRATION_MATRIX via ENV{} — this is stored in the udev runtime
+# database and picked up by libinput when Cog opens the input device.
+mkdir -p /etc/udev/rules.d
 if [ -n "${TOUCH_MATRIX}" ] && [ -n "${TOUCH_DEVICE:-}" ]; then
-    printf '[Kiosk touch calibration]\nMatchName=%s\nAttrCalibrationMatrix=%s\n' \
+    printf 'SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", ENV{LIBINPUT_CALIBRATION_MATRIX}="%s"\n' \
         "${TOUCH_DEVICE}" "${TOUCH_MATRIX}" \
-        > /etc/libinput/local-overrides.quirks
-    echo "Touch calibration quirk: ${TOUCH_MATRIX} (device pattern: ${TOUCH_DEVICE})"
+        > /etc/udev/rules.d/99-kiosk-touch.rules
+    echo "Touch calibration rule: ${TOUCH_MATRIX} (device: ${TOUCH_DEVICE})"
 elif [ -n "${TOUCH_MATRIX}" ]; then
-    rm -f /etc/libinput/local-overrides.quirks
+    rm -f /etc/udev/rules.d/99-kiosk-touch.rules
     echo "WARNING: ROTATE_DISPLAY=${ROTATE_DISPLAY:-} is set but TOUCH_DEVICE is not — touch coordinates will not be corrected for rotation" >&2
 else
-    rm -f /etc/libinput/local-overrides.quirks
+    rm -f /etc/udev/rules.d/99-kiosk-touch.rules
 fi
+
+# Reload rules and re-enumerate input devices so the calibration property is
+# written to the database before Cog opens the device.
+udevadm control --reload 2>/dev/null || true
+udevadm trigger --type=devices --subsystem-match=input 2>/dev/null || true
+udevadm settle --timeout=5 2>/dev/null || true
 
 # Log detected input device names to help configure TOUCH_DEVICE.
 echo "Detected input devices:"
