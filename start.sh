@@ -47,7 +47,7 @@ if [ ! -d /run/udev ]; then
     fi
 fi
 
-# Apply touch calibration via udev hwdb when TOUCH_DEVICE and ROTATE_DISPLAY are set.
+# Determine the calibration matrix for the configured rotation.
 case "${ROTATE_DISPLAY:-}" in
     inverted|180) TOUCH_MATRIX="-1 0 1 0 -1 1" ;;
     left|90)      TOUCH_MATRIX="0 1 0 -1 0 1" ;;
@@ -55,21 +55,36 @@ case "${ROTATE_DISPLAY:-}" in
     *)            TOUCH_MATRIX="" ;;
 esac
 
-mkdir -p /etc/udev/hwdb.d
+# Inject touch calibration directly into the udev runtime database so libinput
+# picks it up regardless of whether the host or container udev is active.
+# The hwdb approach does not work when the host udev socket is mounted
+# (privileged containers on Balena always get the host /run/udev).
 if [ -n "${TOUCH_MATRIX}" ] && [ -n "${TOUCH_DEVICE:-}" ]; then
-    printf 'evdev:name:%s:*\n LIBINPUT_CALIBRATION_MATRIX=%s\n' \
-        "${TOUCH_DEVICE}" "${TOUCH_MATRIX}" \
-        > /etc/udev/hwdb.d/99-kiosk-touch.hwdb
-    echo "Touch calibration: ${TOUCH_MATRIX} (device: ${TOUCH_DEVICE})"
+    _calibrated=0
+    for _event_dir in /sys/class/input/event*; do
+        _dev_name=$(cat "${_event_dir}/device/name" 2>/dev/null) || continue
+        case "${_dev_name}" in
+            ${TOUCH_DEVICE})
+                _dev_num=$(cat "${_event_dir}/dev" 2>/dev/null) || continue
+                _db_file="/run/udev/data/c${_dev_num}"
+                if [ -f "${_db_file}" ]; then
+                    grep -v "^E:LIBINPUT_CALIBRATION_MATRIX=" "${_db_file}" > "${_db_file}.tmp" || true
+                    mv "${_db_file}.tmp" "${_db_file}"
+                    printf 'E:LIBINPUT_CALIBRATION_MATRIX=%s\n' "${TOUCH_MATRIX}" >> "${_db_file}"
+                    echo "Touch calibration injected: ${TOUCH_MATRIX} (device: ${_dev_name}, db: ${_db_file})"
+                    _calibrated=1
+                else
+                    echo "WARNING: udev database file not found: ${_db_file} for device: ${_dev_name}" >&2
+                fi
+                ;;
+        esac
+    done
+    if [ "${_calibrated}" -eq 0 ]; then
+        echo "WARNING: No device matching '${TOUCH_DEVICE}' found — touch coordinates will not be corrected" >&2
+    fi
 elif [ -n "${TOUCH_MATRIX}" ]; then
     echo "WARNING: ROTATE_DISPLAY=${ROTATE_DISPLAY:-} is set but TOUCH_DEVICE is not — touch coordinates will not be corrected for rotation" >&2
-    rm -f /etc/udev/hwdb.d/99-kiosk-touch.hwdb
-else
-    rm -f /etc/udev/hwdb.d/99-kiosk-touch.hwdb
 fi
-udevadm hwdb --update 2>/dev/null || true
-udevadm trigger --type=devices --subsystem-match=input 2>/dev/null || true
-udevadm settle --timeout=5 2>/dev/null || true
 
 # Log detected input device names to help configure TOUCH_DEVICE.
 echo "Detected input devices:"
