@@ -42,10 +42,21 @@ if [ ! -d /run/udev ]; then
     mkdir -p /run/udev
     if /lib/systemd/systemd-udevd --daemon --resolve-names=never 2>/dev/null; then
         echo "udev started"
+        # Wait for the control socket so udevadm trigger reaches the daemon.
+        _wait=0
+        while [ ! -S /run/udev/control ] && [ "${_wait}" -lt 5 ]; do
+            sleep 1
+            _wait=$(( _wait + 1 ))
+        done
     else
         echo "WARNING: udev failed to start — touch input may be unavailable" >&2
     fi
 fi
+
+# Enumerate input devices so the udev runtime database is populated before
+# we attempt to inject the calibration property.
+udevadm trigger --type=devices --subsystem-match=input 2>/dev/null || true
+udevadm settle --timeout=5 2>/dev/null || true
 
 # Determine the calibration matrix for the configured rotation.
 case "${ROTATE_DISPLAY:-}" in
@@ -67,15 +78,11 @@ if [ -n "${TOUCH_MATRIX}" ] && [ -n "${TOUCH_DEVICE:-}" ]; then
             ${TOUCH_DEVICE})
                 _dev_num=$(cat "${_event_dir}/dev" 2>/dev/null) || continue
                 _db_file="/run/udev/data/c${_dev_num}"
-                if [ -f "${_db_file}" ]; then
-                    grep -v "^E:LIBINPUT_CALIBRATION_MATRIX=" "${_db_file}" > "${_db_file}.tmp" || true
-                    mv "${_db_file}.tmp" "${_db_file}"
-                    printf 'E:LIBINPUT_CALIBRATION_MATRIX=%s\n' "${TOUCH_MATRIX}" >> "${_db_file}"
-                    echo "Touch calibration injected: ${TOUCH_MATRIX} (device: ${_dev_name}, db: ${_db_file})"
-                    _calibrated=1
-                else
-                    echo "WARNING: udev database file not found: ${_db_file} for device: ${_dev_name}" >&2
-                fi
+                grep -v "^E:LIBINPUT_CALIBRATION_MATRIX=" "${_db_file}" 2>/dev/null > "${_db_file}.tmp" || true
+                mv "${_db_file}.tmp" "${_db_file}"
+                printf 'E:LIBINPUT_CALIBRATION_MATRIX=%s\n' "${TOUCH_MATRIX}" >> "${_db_file}"
+                echo "Touch calibration injected: ${TOUCH_MATRIX} (device: ${_dev_name}, db: ${_db_file})"
+                _calibrated=1
                 ;;
         esac
     done
