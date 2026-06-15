@@ -295,7 +295,7 @@ func proxyDevice(devPath string, matrix [6]float64, grabbed chan<- struct{}, sto
 	if err != nil {
 		return fmt.Errorf("open %s: %w", devPath, err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	fd := src.Fd()
 
 	xi, err := getAbsInfo(fd, absX)
