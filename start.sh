@@ -53,32 +53,8 @@ if [ ! -d /run/udev ]; then
     fi
 fi
 
-# Determine the calibration matrix for the configured rotation.
-case "${ROTATE_DISPLAY:-}" in
-    inverted|180) TOUCH_MATRIX="-1 0 1 0 -1 1" ;;
-    left|90)      TOUCH_MATRIX="0 1 0 -1 0 1" ;;
-    right|270)    TOUCH_MATRIX="0 -1 1 1 0 0" ;;
-    *)            TOUCH_MATRIX="" ;;
-esac
-
-# Write a udev rules file so the container's own udevd sets
-# LIBINPUT_CALIBRATION_MATRIX via ENV{} — this is stored in the udev runtime
-# database and picked up by libinput when Cog opens the input device.
-mkdir -p /etc/udev/rules.d
-if [ -n "${TOUCH_MATRIX}" ] && [ -n "${TOUCH_DEVICE:-}" ]; then
-    printf 'SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="%s", ENV{LIBINPUT_CALIBRATION_MATRIX}="%s"\n' \
-        "${TOUCH_DEVICE}" "${TOUCH_MATRIX}" \
-        > /etc/udev/rules.d/99-kiosk-touch.rules
-    echo "Touch calibration rule: ${TOUCH_MATRIX} (device: ${TOUCH_DEVICE})"
-elif [ -n "${TOUCH_MATRIX}" ]; then
-    rm -f /etc/udev/rules.d/99-kiosk-touch.rules
-    echo "WARNING: ROTATE_DISPLAY=${ROTATE_DISPLAY:-} is set but TOUCH_DEVICE is not — touch coordinates will not be corrected for rotation" >&2
-else
-    rm -f /etc/udev/rules.d/99-kiosk-touch.rules
-fi
-
-# Reload rules and re-enumerate input devices so the calibration property is
-# written to the database before Cog opens the device.
+# Enumerate input devices so the udev runtime database is populated and
+# /sys/class/input entries exist before kiosk_controller's touch proxy starts.
 udevadm control --reload 2>/dev/null || true
 udevadm trigger --type=devices --subsystem-match=input 2>/dev/null || true
 udevadm settle --timeout=5 2>/dev/null || true

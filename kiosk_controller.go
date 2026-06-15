@@ -123,9 +123,10 @@ type Kiosk struct {
 	stopOnce     sync.Once
 }
 
-// reapplyTouchCalibration re-triggers udev so libinput picks up the hwdb
-// calibration matrix on any input device that was opened since the last trigger.
-// A no-op when TOUCH_DEVICE is not set.
+// reapplyTouchCalibration re-triggers udev so libinput picks up the
+// LIBINPUT_CALIBRATION_MATRIX property set by the udev rules file in start.sh.
+// This is a fallback path used when the touch proxy is not active (e.g. when
+// /dev/uinput is unavailable). A no-op when TOUCH_DEVICE is not set.
 func reapplyTouchCalibration() {
 	if os.Getenv("TOUCH_DEVICE") == "" {
 		return
@@ -532,6 +533,18 @@ func sendJSON(w http.ResponseWriter, status int, v any) {
 
 func main() {
 	k := newKiosk()
+
+	// Start the touch proxy before Cog so the physical device is grabbed
+	// exclusively before libinput opens it. Cog then only sees the virtual
+	// uinput device with pre-transformed coordinates.
+	grabbed := make(chan struct{}, 1)
+	go runTouchProxy(grabbed, k.stopCh)
+	select {
+	case <-grabbed:
+	case <-time.After(proxyGrabTimeout):
+		log.Println("touch-proxy: startup timeout, starting Cog without proxy")
+	}
+
 	k.start()
 	go k.Supervise()
 
