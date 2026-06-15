@@ -44,7 +44,7 @@ runs:
         cat "${MANIFEST_PATH}"
     - name: Deploy to Balena Fleet
       id: deploy
-      uses: balena-io/deploy-to-balena-action@v2.2.13
+      uses: balena-io/deploy-to-balena-action@v2.3.0
       with:
         balena_token: ${{ inputs.balena_token }}
         fleet: ${{ inputs.fleet }}
