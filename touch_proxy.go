@@ -352,14 +352,14 @@ func runTouchProxy(grabbed chan<- struct{}, stopCh <-chan struct{}) {
 	}
 
 	go func() {
-		grabbedOnce := false
+		signalledOnce := false
 		for {
 			devPath := findDevicePath(pattern)
 			if devPath == "" {
-				if !grabbedOnce {
+				if !signalledOnce {
 					log.Printf("touch-proxy: device %q not found, retrying", pattern)
 					grabbed <- struct{}{}
-					grabbedOnce = true
+					signalledOnce = true
 				}
 				select {
 				case <-stopCh:
@@ -371,16 +371,21 @@ func runTouchProxy(grabbed chan<- struct{}, stopCh <-chan struct{}) {
 
 			log.Printf("touch-proxy: starting relay for %s (ROTATE_DISPLAY=%s)", devPath, rotation)
 			g := make(chan struct{}, 1)
+			if !signalledOnce {
+				// Forward the grab signal while proxyDevice is still running so
+				// main() unblocks as soon as the physical device is held.
+				go func() {
+					select {
+					case <-g:
+						grabbed <- struct{}{}
+					case <-stopCh:
+					}
+				}()
+				signalledOnce = true
+			}
+
 			if err := proxyDevice(devPath, matrix, g, stopCh); err != nil {
 				log.Printf("touch-proxy: %v", err)
-			}
-			if !grabbedOnce {
-				select {
-				case <-g:
-				default:
-				}
-				grabbed <- struct{}{}
-				grabbedOnce = true
 			}
 
 			select {
