@@ -53,6 +53,11 @@ if [ ! -d /run/udev ]; then
     fi
 fi
 
+# Tag the virtual touch proxy device so libinput classifies it as a touchscreen.
+cat > /etc/udev/rules.d/99-kiosk-touch-proxy.rules << 'EOF'
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="kiosk-touch-proxy", ENV{ID_INPUT}="1", ENV{ID_INPUT_TOUCHSCREEN}="1"
+EOF
+
 # Enumerate input devices so the udev runtime database is populated and
 # /sys/class/input entries exist before kiosk_controller's touch proxy starts.
 udevadm control --reload 2>/dev/null || true

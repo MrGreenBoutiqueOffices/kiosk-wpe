@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -150,6 +151,30 @@ func getAbsInfo(fd uintptr, code uint16) (absInfo, error) {
 		return absInfo{}, fmt.Errorf("EVIOCGABS(%d): %w", code, errno)
 	}
 	return info, nil
+}
+
+// waitForVirtualDevice polls sysfs until the named uinput device appears, then
+// triggers udev so libinput receives the add event with the right properties.
+func waitForVirtualDevice(name string) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, _ := filepath.Glob("/sys/class/input/event*/device/name")
+		for _, entry := range entries {
+			data, err := os.ReadFile(entry)
+			if err != nil {
+				continue
+			}
+			if strings.TrimSpace(string(data)) == name {
+				event := filepath.Base(filepath.Dir(filepath.Dir(entry)))
+				_ = exec.Command("udevadm", "trigger", "--action=add", "--sysname-match="+event).Run() //nolint:gosec
+				_ = exec.Command("udevadm", "settle", "--timeout=2").Run()                              //nolint:gosec
+				log.Printf("touch-proxy: virtual device ready at /dev/input/%s", event)
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	log.Printf("touch-proxy: virtual device %q not found in sysfs after 2s", name)
 }
 
 func findDevicePath(pattern string) string {
@@ -324,8 +349,9 @@ func proxyDevice(devPath string, matrix [6]float64, grabbed chan<- struct{}, sto
 		_ = syscall.Close(ufd)
 	}()
 
-	// Give the kernel a moment to expose the new virtual device via udev.
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the virtual device to appear in sysfs and trigger udev so
+	// libinput classifies it as a touchscreen before we grab the physical device.
+	waitForVirtualDevice("kiosk-touch-proxy")
 
 	if err := ioctlInt(fd, eviocGrab, 1); err != nil {
 		return fmt.Errorf("EVIOCGRAB: %w", err)
