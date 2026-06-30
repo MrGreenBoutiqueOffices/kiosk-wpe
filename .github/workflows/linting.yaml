@@ -19,7 +19,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: 🚀 Run golangci-lint
-        uses: golangci/golangci-lint-action@v9.2.1
+        uses: golangci/golangci-lint-action@v9.3.0
 
   prek-hooks:
     name: Prek hooks
