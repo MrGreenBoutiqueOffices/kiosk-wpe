@@ -8,7 +8,7 @@ WPE/Cog kiosk browser block for Balena. Runs a fullscreen browser on a DRM displ
 - 🌐 HTTP API for URL navigation, reload, status, and health checks
 - 🔄 Display rotation with automatic touch coordinate calibration via udev hwdb
 - 🔁 Automatic crash recovery with exponential backoff (up to 30 s); instant detection via process exit channel
-- 💾 URL persistence in a named volume — survives Cog crashes, container restarts, and image updates
+- 🔄 Runtime URL control — switch pages without restarting Cog
 - ⏳ Startup readiness check — waits for the target URL to be reachable before launching Cog
 
 ## Quick start
@@ -181,7 +181,7 @@ uv run pre-commit run
 - A 500 ms settle delay after stopping Cog prevents "Cannot set mode (Permission denied)" DRM errors when using the `gles` renderer.
 - Cog crashes are detected instantly (via process exit channel) and restarted with exponential backoff (max 30 s). The crash counter resets only after 30 s of stable uptime.
 - `/health` returns 503 when `crash_count` exceeds 5, signalling a crash loop to external monitors.
-- The active URL is persisted to `/data/kiosk-url` (a named Docker volume). It survives Cog crashes, container restarts, and image updates. `LAUNCH_URL` is only used when no persisted URL exists. Mount the `browser-data` volume at `/data` in your `docker-compose.yml`.
+- `LAUNCH_URL` is authoritative when the container starts. URL changes made through the control API apply to the current container runtime; after a container restart the latest `LAUNCH_URL` is loaded again.
 - udev is started in-container; `io.balena.features.udev` does not reliably mount `/run/udev` on all Balena OS versions. A warning is logged to stderr if udev fails to start.
 - Setting `ROTATE_DISPLAY` without `TOUCH_DEVICE` logs a warning — touch coordinates will not be corrected for rotation.
 
