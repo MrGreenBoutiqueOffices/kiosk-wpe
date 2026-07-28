@@ -44,8 +44,6 @@ const (
 	maxBodyBytes = 4096
 )
 
-const stateFile = "/data/kiosk-url" //nolint:gosec
-
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -111,8 +109,8 @@ type Kiosk struct {
 	mu           sync.Mutex
 	process      *proc
 	currentURL   string
-	stopping    bool
-	restarting  int // counts in-flight intentional restarts; only 0 when all callers finished
+	stopping     bool
+	restarting   int // counts in-flight intentional restarts; only 0 when all callers finished
 	crashCount   int
 	startedAt    time.Time
 	cogStartedAt time.Time // zero value = Cog not yet started
@@ -131,7 +129,7 @@ func reapplyTouchCalibration() {
 		return
 	}
 	_ = exec.Command("udevadm", "trigger", "--action=change", "--type=devices", "--subsystem-match=input").Run() //nolint:gosec
-	_ = exec.Command("udevadm", "settle", "--timeout=3").Run()                                                    //nolint:gosec
+	_ = exec.Command("udevadm", "settle", "--timeout=3").Run()                                                   //nolint:gosec
 }
 
 // cogNavigate asks the running Cog instance to navigate to url via D-Bus,
@@ -180,17 +178,7 @@ func newKiosk() *Kiosk {
 }
 
 func (k *Kiosk) loadURL() string {
-	if data, err := os.ReadFile(stateFile); err == nil {
-		if url := strings.TrimSpace(string(data)); url != "" {
-			return url
-		}
-	}
 	return envOr("LAUNCH_URL", defaultURL)
-}
-
-func (k *Kiosk) saveURL() {
-	_ = os.MkdirAll("/data", 0o700)
-	_ = os.WriteFile(stateFile, []byte(k.currentURL), 0o600)
 }
 
 func (k *Kiosk) buildArgs() []string {
@@ -267,12 +255,12 @@ func (k *Kiosk) Restart() {
 	k.mu.Unlock()
 }
 
-// SetURL persists a new URL and navigates Cog to it via D-Bus.
+// SetURL updates the URL for the current container runtime and navigates Cog
+// to it via D-Bus. After a container restart, LAUNCH_URL is authoritative.
 // Falls back to a full restart when D-Bus is unavailable.
 func (k *Kiosk) SetURL(url string) {
 	k.mu.Lock()
 	k.currentURL = url
-	k.saveURL()
 	k.mu.Unlock()
 
 	if err := cogNavigate(url); err != nil {
