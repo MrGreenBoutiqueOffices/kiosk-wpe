@@ -21,4 +21,5 @@ jobs:
         with:
           valid-labels: >-
             breaking-change, bugfix, documentation, enhancement, sync,
-            refactor, performance, new-feature, maintenance, ci, dependencies
+            refactor, performance, new-feature, maintenance, ci, dependencies,
+            security
