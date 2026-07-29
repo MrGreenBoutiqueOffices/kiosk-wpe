@@ -103,7 +103,7 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | `POST` | `/refresh` | Re-navigate to the current URL via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. |
 | `POST` | `/restart` | Fully restart Cog and re-apply touch calibration (async, returns 200 immediately). Use when Cog is in a bad state. |
 | `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
-| `GET` | `/health` | 200 OK while healthy; 503 when `crash_count` exceeds 5 (crash loop detected) |
+| `GET` | `/health` | 200 only while Cog is running, ready and outside a crash loop; otherwise 503 |
 
 ```sh
 # Current URL
@@ -175,12 +175,23 @@ uv run pre-commit run
 ## Runtime notes
 
 - The controller is a static Go binary — no runtime dependencies in the image.
+- The arm64 runtime pins Cog, WPE WebKit and its FDO backend from Debian Trixie. Renovate tracks
+  updates that are actually published for Trixie as one non-automerge `deploy-pr`, so each
+  browser-engine bump goes through the normal block release and hardware validation flow. Testing
+  or unstable packages are deliberately not mixed into this production image.
+- Startup and Cog output preserve the URL scheme and host but redact HTTP(S) paths, queries and
+  fragments because kiosk URLs can contain credentials or identifiers. The control API continues
+  to return the active URL for deliberate diagnostics.
 - URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
 - After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
 - Cog and all its WPE subprocesses run in their own process group; on a hard restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.
+- Cog defaults to `--webprocess-failure=exit`, making a crashed web process visible to the
+  supervisor and `/health` instead of leaving a falsely healthy error surface. An explicit
+  `COG_EXTRA_ARGS` value can override that policy.
 - A 500 ms settle delay after stopping Cog prevents "Cannot set mode (Permission denied)" DRM errors when using the `gles` renderer.
 - Cog crashes are detected instantly (via process exit channel) and restarted with exponential backoff (max 30 s). The crash counter resets only after 30 s of stable uptime.
-- `/health` returns 503 when `crash_count` exceeds 5, signalling a crash loop to external monitors.
+- `/health` returns 503 while Cog is stopped, not ready or above five crashes; it does not claim
+  that the loaded page itself rendered successfully.
 - `LAUNCH_URL` is authoritative when the container starts. URL changes made through the control API apply to the current container runtime; after a container restart the latest `LAUNCH_URL` is loaded again.
 - udev is started in-container; `io.balena.features.udev` does not reliably mount `/run/udev` on all Balena OS versions. A warning is logged to stderr if udev fails to start.
 - Setting `ROTATE_DISPLAY` without `TOUCH_DEVICE` logs a warning — touch coordinates will not be corrected for rotation.

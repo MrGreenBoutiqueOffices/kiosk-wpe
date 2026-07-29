@@ -6,20 +6,26 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o kiosk_controller .
 FROM debian:trixie-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
+# renovate: datasource=deb depName=cog registryUrl=https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=arm64
+ARG COG_VERSION="0.18.4-1+b1"
+# renovate: datasource=deb depName=libwpewebkit-2.0-1 registryUrl=https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=arm64
+ARG WPE_WEBKIT_VERSION="2.48.3-1"
+# renovate: datasource=deb depName=libwpebackend-fdo-1.0-1 registryUrl=https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=arm64
+ARG WPE_BACKEND_VERSION="1.16.0-1"
 
 RUN printf 'path-exclude=/usr/share/doc/*\npath-exclude=/usr/share/man/*\npath-exclude=/usr/share/info/*\n' \
         > /etc/dpkg/dpkg.cfg.d/no-docs \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        cog=0.18.4-1+b1 \
+        cog="${COG_VERSION}" \
         dbus \
         fonts-dejavu-core \
         libglib2.0-bin \
         libgbm1 \
         libgles2 \
-        libwpebackend-fdo-1.0-1 \
-        libwpewebkit-2.0-1 \
+        libwpebackend-fdo-1.0-1="${WPE_BACKEND_VERSION}" \
+        libwpewebkit-2.0-1="${WPE_WEBKIT_VERSION}" \
         udev \
         wget \
     && apt-get clean \

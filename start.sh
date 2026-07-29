@@ -14,10 +14,14 @@ if [ -z "${COG_PLATFORM_PARAMS:-}" ]; then
 fi
 
 echo "=== kiosk-wpe ==="
-echo "  LAUNCH_URL         = ${LAUNCH_URL}"
+echo "  LAUNCH_URL         = <configured>"
 echo "  ROTATE_DISPLAY     = ${ROTATE_DISPLAY:-<unset>}"
 echo "  COG_PLATFORM_PARAMS= ${COG_PLATFORM_PARAMS:-<unset>}"
-echo "  COG_EXTRA_ARGS     = ${COG_EXTRA_ARGS:-<unset>}"
+if [ -n "${COG_EXTRA_ARGS:-}" ]; then
+    echo "  COG_EXTRA_ARGS     = <configured>"
+else
+    echo "  COG_EXTRA_ARGS     = <unset>"
+fi
 echo "  IGNORE_TLS_ERRORS  = ${IGNORE_TLS_ERRORS:-<unset>}"
 echo "  TOUCH_DEVICE       = ${TOUCH_DEVICE:-<unset>}"
 echo "  API PORT           = ${KIOSK_API_PORT}"
@@ -101,7 +105,7 @@ case "${LAUNCH_URL}" in
                 echo "URL not ready after 60s, starting anyway"
                 break
             fi
-            echo "Waiting for ${LAUNCH_URL}... (${_retries}/30)"
+            echo "Waiting for configured URL... (${_retries}/30)"
             sleep 2
         done
         ;;

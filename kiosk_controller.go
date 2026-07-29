@@ -2,21 +2,45 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
+
+var httpURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
+
+func redactURLs(value string) string {
+	return httpURLPattern.ReplaceAllStringFunc(value, redactURL)
+}
+
+func redactURL(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "<redacted-url>"
+	}
+
+	safePath := ""
+	if parsed.EscapedPath() != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		safePath = "/<redacted>"
+	}
+
+	return parsed.Scheme + "://" + parsed.Host + safePath
+}
 
 const (
 	defaultURL = "about:blank"
@@ -60,14 +84,22 @@ type proc struct {
 
 func launch(args []string) (*proc, error) {
 	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
 	// Own process group so SIGTERM reaches all WPE child processes (WPEWebProcess,
 	// WPENetworkProcess) and they release DRM/GL resources before we start a new Cog.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	go copyRedactedLines(os.Stdout, stdout)
+	go copyRedactedLines(os.Stderr, stderr)
 	p := &proc{cmd: cmd, exited: make(chan struct{})}
 	go func() {
 		_ = cmd.Wait()
@@ -78,6 +110,17 @@ func launch(args []string) (*proc, error) {
 		close(p.exited)
 	}()
 	return p, nil
+}
+
+func copyRedactedLines(target *os.File, source io.Reader) {
+	scanner := bufio.NewScanner(source)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		_, _ = fmt.Fprintln(target, redactURLs(scanner.Text()))
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("Cog output stream failed: %v", err)
+	}
 }
 
 func (p *proc) running() bool {
@@ -152,7 +195,7 @@ func cogNavigate(url string) error {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) > 0 {
-		log.Printf("gdbus: %s", strings.TrimSpace(string(out)))
+		log.Printf("gdbus: %s", redactURLs(strings.TrimSpace(string(out))))
 	}
 	return err
 }
@@ -194,7 +237,19 @@ func (k *Kiosk) buildArgs() []string {
 	if p := os.Getenv("COG_PLATFORM_PARAMS"); p != "" {
 		args = append(args, "--platform-params", p)
 	}
+	if !hasArgument(args, "--webprocess-failure") {
+		args = append(args, "--webprocess-failure=exit")
+	}
 	return append(args, k.currentURL)
+}
+
+func hasArgument(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (k *Kiosk) start() {
@@ -215,7 +270,7 @@ func (k *Kiosk) start() {
 		return
 	}
 	args := k.buildArgs()
-	log.Printf("Starting Cog: %s", strings.Join(args, " "))
+	log.Printf("Starting Cog at %s", redactURLs(k.currentURL))
 	p, err := launch(args)
 	if err != nil {
 		log.Printf("Failed to start Cog: %v", err)
@@ -502,9 +557,11 @@ func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	h.kiosk.mu.Lock()
 	crashCount := h.kiosk.crashCount
+	ready := h.kiosk.ready
+	running := h.kiosk.process != nil && h.kiosk.process.running()
 	h.kiosk.mu.Unlock()
 
-	if crashCount > healthyCrashThreshold {
+	if !running || !ready || crashCount > healthyCrashThreshold {
 		sendJSON(w, http.StatusServiceUnavailable, map[string]bool{"ok": false})
 		return
 	}
