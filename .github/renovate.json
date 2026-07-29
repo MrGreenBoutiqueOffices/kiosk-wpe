@@ -10,7 +10,25 @@
     "automerge": true
   },
   "commitMessagePrefix": "⬆️",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)Dockerfile\\.template$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) registryUrl=(?<registryUrl>\\S+)\\s+ARG \\S+_VERSION=\"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "{{{datasource}}}",
+      "registryUrlTemplate": "{{{registryUrl}}}"
+    }
+  ],
   "packageRules": [
+    {
+      "matchDatasources": ["deb"],
+      "groupName": "Cog and WPE runtime",
+      "groupSlug": "cog-wpe-runtime",
+      "addLabels": ["docker", "deploy-pr"],
+      "automerge": false
+    },
     {
       "matchManagers": ["gomod"],
       "addLabels": ["go"],

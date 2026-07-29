@@ -194,7 +194,19 @@ func (k *Kiosk) buildArgs() []string {
 	if p := os.Getenv("COG_PLATFORM_PARAMS"); p != "" {
 		args = append(args, "--platform-params", p)
 	}
+	if !hasArgument(args, "--webprocess-failure") {
+		args = append(args, "--webprocess-failure=exit")
+	}
 	return append(args, k.currentURL)
+}
+
+func hasArgument(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (k *Kiosk) start() {
@@ -215,7 +227,7 @@ func (k *Kiosk) start() {
 		return
 	}
 	args := k.buildArgs()
-	log.Printf("Starting Cog: %s", strings.Join(args, " "))
+	log.Printf("Starting Cog at %s", k.currentURL)
 	p, err := launch(args)
 	if err != nil {
 		log.Printf("Failed to start Cog: %v", err)
@@ -502,9 +514,11 @@ func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	h.kiosk.mu.Lock()
 	crashCount := h.kiosk.crashCount
+	ready := h.kiosk.ready
+	running := h.kiosk.process != nil && h.kiosk.process.running()
 	h.kiosk.mu.Unlock()
 
-	if crashCount > healthyCrashThreshold {
+	if !running || !ready || crashCount > healthyCrashThreshold {
 		sendJSON(w, http.StatusServiceUnavailable, map[string]bool{"ok": false})
 		return
 	}
