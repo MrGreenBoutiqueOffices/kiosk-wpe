@@ -23,13 +23,6 @@
   ],
   "packageRules": [
     {
-      "matchDatasources": ["deb"],
-      "groupName": "Cog and WPE runtime",
-      "groupSlug": "cog-wpe-runtime",
-      "addLabels": ["docker", "deploy-pr"],
-      "automerge": false
-    },
-    {
       "matchManagers": ["gomod"],
       "addLabels": ["go"],
       "automerge": false
@@ -53,6 +46,18 @@
       "automerge": false
     },
     {
+      "matchManagers": ["dockerfile", "custom.regex"],
+      "groupName": "container build dependencies",
+      "groupSlug": "container-build-dependencies"
+    },
+    {
+      "matchDatasources": ["deb"],
+      "groupName": "Cog and WPE runtime",
+      "groupSlug": "cog-wpe-runtime",
+      "addLabels": ["docker", "deploy-pr"],
+      "automerge": false
+    },
+    {
       "matchManagers": ["github-actions"],
       "addLabels": ["github_actions"],
       "rangeStrategy": "pin",
@@ -62,8 +67,7 @@
     {
       "matchManagers": ["github-actions"],
       "groupName": "github actions",
-      "groupSlug": "github-actions",
-      "automerge": true
+      "groupSlug": "github-actions"
     },
     {
       "matchManagers": ["dockerfile", "gomod", "pep621"],
