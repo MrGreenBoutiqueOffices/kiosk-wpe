@@ -5,33 +5,6 @@ export LAUNCH_URL="${LAUNCH_URL:-about:blank}"
 export KIOSK_API_PORT="${KIOSK_API_PORT:-5011}"
 export NO_AT_BRIDGE=1
 
-redact_launch_url() {
-    case "$1" in
-        http://*)
-            _scheme="http://"
-            _url_rest=${1#http://}
-            ;;
-        https://*)
-            _scheme="https://"
-            _url_rest=${1#https://}
-            ;;
-        *)
-            printf '%s\n' "$1"
-            return
-            ;;
-    esac
-
-    _authority=${_url_rest%%[/?#]*}
-    _host=${_authority##*@}
-    if [ -z "${_host}" ]; then
-        printf '%s\n' "<redacted-url>"
-    elif [ "${_url_rest}" = "${_authority}" ]; then
-        printf '%s%s\n' "${_scheme}" "${_host}"
-    else
-        printf '%s%s/<redacted>\n' "${_scheme}" "${_host}"
-    fi
-}
-
 if [ -z "${COG_PLATFORM_PARAMS:-}" ]; then
     case "${ROTATE_DISPLAY:-}" in
         inverted|180) export COG_PLATFORM_PARAMS="renderer=gles,rotation=2" ;;
@@ -40,9 +13,8 @@ if [ -z "${COG_PLATFORM_PARAMS:-}" ]; then
     esac
 fi
 
-_redacted_launch_url=$(redact_launch_url "${LAUNCH_URL}")
 echo "=== kiosk-wpe ==="
-echo "  LAUNCH_URL         = ${_redacted_launch_url}"
+echo "  LAUNCH_URL         = ${LAUNCH_URL}"
 echo "  ROTATE_DISPLAY     = ${ROTATE_DISPLAY:-<unset>}"
 echo "  COG_PLATFORM_PARAMS= ${COG_PLATFORM_PARAMS:-<unset>}"
 if [ -n "${COG_EXTRA_ARGS:-}" ]; then

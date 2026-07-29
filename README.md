@@ -179,9 +179,9 @@ uv run pre-commit run
   updates that are actually published for Trixie as one non-automerge `deploy-pr`, so each
   browser-engine bump goes through the normal block release and hardware validation flow. Testing
   or unstable packages are deliberately not mixed into this production image.
-- Startup and Cog output preserve the URL scheme and host but redact HTTP(S) paths, queries and
-  fragments because kiosk URLs can contain credentials or identifiers. The control API continues
-  to return the active URL for deliberate diagnostics.
+- Startup, Cog and D-Bus diagnostics log configured URLs verbatim. This is intentional so operators
+  can inspect the exact navigation target; deployments that place credentials or sensitive
+  identifiers in URLs accept that those values can appear in the container logs.
 - URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
 - After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
 - Cog and all its WPE subprocesses run in their own process group; on a hard restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.

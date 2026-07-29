@@ -3,33 +3,8 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
-
-func TestRedactURLs(t *testing.T) {
-	t.Parallel()
-
-	input := `Load started: https://kiosk.example/app/secret-identifier?mode=local`
-	output := redactURLs(input)
-
-	if strings.Contains(output, "secret-identifier") {
-		t.Fatalf("redacted output still contains the identifier: %q", output)
-	}
-	if output != "Load started: https://kiosk.example/<redacted>" {
-		t.Fatalf("unexpected redacted output: %q", output)
-	}
-}
-
-func TestRedactURLDoesNotExposeAnUnknownSinglePathSegment(t *testing.T) {
-	t.Parallel()
-
-	output := redactURLs("https://kiosk.example/secret-identifier?mode=local")
-
-	if output != "https://kiosk.example/<redacted>" {
-		t.Fatalf("unexpected redacted output: %q", output)
-	}
-}
 
 func TestBuildArgsMakesWebProcessFailuresObservable(t *testing.T) {
 	t.Setenv("COG_COMMAND", "cog")
