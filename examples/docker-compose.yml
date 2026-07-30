@@ -17,5 +17,6 @@ services:
       - /dev/input
     environment:
       - LAUNCH_URL=https://example.com
+      # - KIOSK_RECOVERY_URL=https://example.com/health
       # - ROTATE_DISPLAY=right
       # - TOUCH_DEVICE=*Waveshare*

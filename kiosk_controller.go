@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -44,6 +45,9 @@ const (
 	healthyCrashThreshold = 5
 
 	maxBodyBytes = 4096
+
+	recoveryPollInterval = 5 * time.Second
+	recoveryProbeTimeout = 2 * time.Second
 )
 
 func envOr(key, fallback string) string {
@@ -144,6 +148,45 @@ func (p *proc) stop() {
 func processGroupRunning(pgid int) bool {
 	err := syscall.Kill(-pgid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+type recoveryAvailability struct {
+	initialized bool
+	reachable   bool
+}
+
+// observe reports whether a configured recovery target has returned after an
+// outage. The first observation establishes the baseline. A healthy initial
+// observation never restarts Cog; recovery after an initial outage does.
+func (state *recoveryAvailability) observe(reachable bool) bool {
+	if !state.initialized {
+		state.initialized = true
+		state.reachable = reachable
+		return false
+	}
+
+	recovered := !state.reachable && reachable
+	state.reachable = reachable
+	return recovered
+}
+
+func recoveryURLReachable(recoveryURL string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), recoveryProbeTimeout)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, recoveryURL, nil)
+	if err != nil {
+		return false
+	}
+	request.Header.Set("Cache-Control", "no-cache, no-store")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return false
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	return response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusBadRequest
 }
 
 // Kiosk manages the Cog subprocess and the active URL.
@@ -309,6 +352,10 @@ func (k *Kiosk) stop() {
 // It is safe to call concurrently; last caller wins.
 func (k *Kiosk) Restart() {
 	k.mu.Lock()
+	if k.stopping {
+		k.mu.Unlock()
+		return
+	}
 	k.crashCount = 0
 	k.restarting++
 	k.mu.Unlock()
@@ -463,6 +510,36 @@ func (k *Kiosk) Stop() {
 	k.stop()
 }
 
+// MonitorRecovery hard-restarts Cog once when an optional HTTP recovery target
+// becomes reachable again. This recovers native browser error pages that cannot
+// reload themselves after their upstream was temporarily unavailable.
+func (k *Kiosk) MonitorRecovery(recoveryURL string) {
+	var availability recoveryAvailability
+	ticker := time.NewTicker(recoveryPollInterval)
+	defer ticker.Stop()
+
+	for {
+		reachable := recoveryURLReachable(recoveryURL)
+
+		select {
+		case <-k.stopCh:
+			return
+		default:
+		}
+
+		if availability.observe(reachable) {
+			log.Printf("Kiosk recovery target is reachable again; restarting Cog")
+			k.Restart()
+		}
+
+		select {
+		case <-ticker.C:
+		case <-k.stopCh:
+			return
+		}
+	}
+}
+
 // --- HTTP handler ---
 
 type handler struct{ kiosk *Kiosk }
@@ -604,6 +681,12 @@ func main() {
 	k := newKiosk()
 	k.start()
 	go k.Supervise()
+	if recoveryURL := strings.TrimSpace(os.Getenv("KIOSK_RECOVERY_URL")); recoveryURL != "" {
+		if !strings.HasPrefix(recoveryURL, "http://") && !strings.HasPrefix(recoveryURL, "https://") {
+			log.Fatal("KIOSK_RECOVERY_URL must use http:// or https://")
+		}
+		go k.MonitorRecovery(recoveryURL)
+	}
 
 	port := envOr("KIOSK_API_PORT", "5011")
 	addr := "0.0.0.0:" + port
