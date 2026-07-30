@@ -24,6 +24,11 @@ else
 fi
 echo "  IGNORE_TLS_ERRORS  = ${IGNORE_TLS_ERRORS:-<unset>}"
 echo "  TOUCH_DEVICE       = ${TOUCH_DEVICE:-<unset>}"
+if [ -n "${KIOSK_RECOVERY_URL:-}" ]; then
+    echo "  KIOSK_RECOVERY_URL = <configured>"
+else
+    echo "  KIOSK_RECOVERY_URL = <unset>"
+fi
 echo "  API PORT           = ${KIOSK_API_PORT}"
 echo "  DBUS_SESSION_BUS_ADDRESS = ${DBUS_SESSION_BUS_ADDRESS:-<unset>}"
 echo "========================="
