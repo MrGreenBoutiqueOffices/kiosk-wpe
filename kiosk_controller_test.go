@@ -155,6 +155,21 @@ while :; do sleep 1; done
 	}
 }
 
+func TestRestartReturnsAfterStopHasBegun(t *testing.T) {
+	cacheDirectory := t.TempDir()
+	kiosk := &Kiosk{
+		cacheDir: cacheDirectory,
+		stopping: true,
+		stopCh:   make(chan struct{}),
+	}
+
+	kiosk.Restart()
+
+	if kiosk.cacheDir != cacheDirectory {
+		t.Fatalf("restart changed cache directory during shutdown to %q", kiosk.cacheDir)
+	}
+}
+
 func TestRecoveryAvailabilityRestartsOnlyAfterRecovery(t *testing.T) {
 	t.Parallel()
 
@@ -226,7 +241,9 @@ func TestRecoveryURLReachableRequiresSuccessfulHTTPResponse(t *testing.T) {
 	if recoveryURLReachable(server.URL + "/unavailable") {
 		t.Fatal("failing recovery response reported reachable")
 	}
-	if recoveryURLReachable("http://127.0.0.1:1/unreachable") {
+	unreachableURL := server.URL + "/ready"
+	server.Close()
+	if recoveryURLReachable(unreachableURL) {
 		t.Fatal("connection failure reported reachable")
 	}
 }

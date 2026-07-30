@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -183,6 +184,7 @@ func recoveryURLReachable(recoveryURL string) bool {
 	if err != nil {
 		return false
 	}
+	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	return response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusBadRequest
 }
@@ -350,6 +352,10 @@ func (k *Kiosk) stop() {
 // It is safe to call concurrently; last caller wins.
 func (k *Kiosk) Restart() {
 	k.mu.Lock()
+	if k.stopping {
+		k.mu.Unlock()
+		return
+	}
 	k.crashCount = 0
 	k.restarting++
 	k.mu.Unlock()
@@ -514,6 +520,13 @@ func (k *Kiosk) MonitorRecovery(recoveryURL string) {
 
 	for {
 		reachable := recoveryURLReachable(recoveryURL)
+
+		select {
+		case <-k.stopCh:
+			return
+		default:
+		}
+
 		if availability.observe(reachable) {
 			log.Printf("Kiosk recovery target is reachable again; restarting Cog")
 			k.Restart()
