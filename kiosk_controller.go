@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,7 +20,8 @@ import (
 )
 
 const (
-	defaultURL = "about:blank"
+	defaultURL   = "about:blank"
+	defaultCache = "/tmp/kiosk-wpe-cache"
 
 	// stopTimeout is how long we wait for Cog to exit after SIGTERM before SIGKILL.
 	// 10 s gives WPE subprocesses time to wind down GL contexts and release DRM.
@@ -51,24 +53,41 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func envWith(key, value string) []string {
+	prefix := key + "="
+	environment := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, prefix) {
+			environment = append(environment, item)
+		}
+	}
+	return append(environment, prefix+value)
+}
+
 // proc wraps a running exec.Cmd; exited is closed when the process terminates.
 type proc struct {
 	cmd      *exec.Cmd
 	exitCode int
 	exited   chan struct{}
+	pgid     int
 }
 
-func launch(args []string) (*proc, error) {
+func launch(args []string, cacheDir string) (*proc, error) {
 	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = envWith("XDG_CACHE_HOME", cacheDir)
 	// Own process group so SIGTERM reaches all WPE child processes (WPEWebProcess,
 	// WPENetworkProcess) and they release DRM/GL resources before we start a new Cog.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	p := &proc{cmd: cmd, exited: make(chan struct{})}
+	p := &proc{
+		cmd:    cmd,
+		exited: make(chan struct{}),
+		pgid:   cmd.Process.Pid,
+	}
 	go func() {
 		_ = cmd.Wait()
 		if cmd.ProcessState != nil {
@@ -90,18 +109,41 @@ func (p *proc) running() bool {
 }
 
 func (p *proc) stop() {
-	if !p.running() {
+	if p.pgid <= 0 || !processGroupRunning(p.pgid) {
 		return
 	}
-	// Kill the entire process group to take down WPE subprocesses along with Cog.
-	pgid := p.cmd.Process.Pid
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	select {
-	case <-p.exited:
-	case <-time.After(stopTimeout):
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+
+	if err := syscall.Kill(-p.pgid, syscall.SIGTERM); err != nil &&
+		!errors.Is(err, syscall.ESRCH) {
+		log.Printf("Failed to terminate Cog process group %d: %v", p.pgid, err)
+	}
+
+	deadline := time.NewTimer(stopTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	for processGroupRunning(p.pgid) {
+		select {
+		case <-deadline.C:
+			log.Printf("Cog process group %d did not stop; killing it", p.pgid)
+			_ = syscall.Kill(-p.pgid, syscall.SIGKILL)
+			if p.running() {
+				<-p.exited
+			}
+			return
+		case <-ticker.C:
+		}
+	}
+
+	if p.running() {
 		<-p.exited
 	}
+}
+
+func processGroupRunning(pgid int) bool {
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // Kiosk manages the Cog subprocess and the active URL.
@@ -109,6 +151,8 @@ type Kiosk struct {
 	mu           sync.Mutex
 	process      *proc
 	currentURL   string
+	cacheRoot    string
+	cacheDir     string
 	stopping     bool
 	restarting   int // counts in-flight intentional restarts; only 0 when all callers finished
 	crashCount   int
@@ -172,6 +216,7 @@ func newKiosk() *Kiosk {
 		startedAt:  time.Now(),
 		cogVersion: getCogVersion(),
 		stopCh:     make(chan struct{}),
+		cacheRoot:  envOr("KIOSK_CACHE_ROOT", defaultCache),
 	}
 	k.currentURL = k.loadURL()
 	return k
@@ -226,9 +271,21 @@ func (k *Kiosk) start() {
 	if k.stopping || (k.process != nil && k.process.running()) {
 		return
 	}
+	if k.cacheDir == "" {
+		if err := os.MkdirAll(k.cacheRoot, 0o700); err != nil {
+			log.Printf("Failed to prepare Cog cache root: %v", err)
+			return
+		}
+		cacheDir, err := os.MkdirTemp(k.cacheRoot, "generation-")
+		if err != nil {
+			log.Printf("Failed to prepare Cog cache directory: %v", err)
+			return
+		}
+		k.cacheDir = filepath.Clean(cacheDir)
+	}
 	args := k.buildArgs()
 	log.Printf("Starting Cog at %s", k.currentURL)
-	p, err := launch(args)
+	p, err := launch(args, k.cacheDir)
 	if err != nil {
 		log.Printf("Failed to start Cog: %v", err)
 		return
@@ -260,6 +317,17 @@ func (k *Kiosk) Restart() {
 	// Allow the kernel to fully release the DRM master lock before the next
 	// Cog process tries to claim it; without this the gles renderer gets EPERM.
 	time.Sleep(drmSettleDelay)
+
+	k.mu.Lock()
+	staleCacheDir := k.cacheDir
+	k.cacheDir = ""
+	k.mu.Unlock()
+	if staleCacheDir != "" {
+		if err := os.RemoveAll(staleCacheDir); err != nil {
+			log.Printf("Failed to clear stale Cog cache %s: %v", staleCacheDir, err)
+		}
+	}
+
 	k.start()
 
 	k.mu.Lock()

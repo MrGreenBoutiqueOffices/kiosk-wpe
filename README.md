@@ -46,6 +46,7 @@ Set these fleet variables in Balena Cloud to get going:
 |----------|---------|-------------|
 | `IGNORE_TLS_ERRORS` | _(unset)_ | Set to `1` to ignore TLS certificate errors |
 | `COG_EXTRA_ARGS` | _(unset)_ | Extra CLI flags passed to Cog (see [Cog flags](#cog-flags)) |
+| `KIOSK_CACHE_ROOT` | `/tmp/kiosk-wpe-cache` | Dedicated root for per-generation Cog cache directories |
 
 ### API
 
@@ -101,7 +102,7 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | `GET` | `/url` | Current URL as plain text |
 | `POST` | `/url` | `{"url": "https://..."}` — navigate via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. Only `http://`, `https://`, and `about:` schemes accepted. |
 | `POST` | `/refresh` | Re-navigate to the current URL via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. |
-| `POST` | `/restart` | Fully restart Cog and re-apply touch calibration (async, returns 200 immediately). Use when Cog is in a bad state. |
+| `POST` | `/restart` | Fully restart the Cog process group with a fresh cache and re-apply touch calibration (async, returns 200 immediately). Use when Cog is in a bad state. |
 | `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
 | `GET` | `/health` | 200 only while Cog is running, ready and outside a crash loop; otherwise 503 |
 
@@ -185,6 +186,8 @@ uv run pre-commit run
 - URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
 - After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
 - Cog and all its WPE subprocesses run in their own process group; on a hard restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.
+- Every hard restart uses a new cache generation below `KIOSK_CACHE_ROOT` and removes the previous
+  generation. Persistent browser data such as LocalStorage and IndexedDB is not removed.
 - Cog defaults to `--webprocess-failure=exit`, making a crashed web process visible to the
   supervisor and `/health` instead of leaving a falsely healthy error surface. An explicit
   `COG_EXTRA_ARGS` value can override that policy.
