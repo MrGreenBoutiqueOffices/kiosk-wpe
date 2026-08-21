@@ -48,6 +48,9 @@ const (
 
 	recoveryPollInterval = 5 * time.Second
 	recoveryProbeTimeout = 2 * time.Second
+
+	startupReadinessTimeout      = 60 * time.Second
+	startupReadinessPollInterval = 2 * time.Second
 )
 
 func envOr(key, fallback string) string {
@@ -170,23 +173,43 @@ func (state *recoveryAvailability) observe(reachable bool) bool {
 	return recovered
 }
 
-func recoveryURLReachable(recoveryURL string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), recoveryProbeTimeout)
-	defer cancel()
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, recoveryURL, nil)
+func urlReachable(ctx context.Context, client *http.Client, targetURL string) bool {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return false
 	}
 	request.Header.Set("Cache-Control", "no-cache, no-store")
 
-	response, err := http.DefaultClient.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return false
 	}
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	return response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusBadRequest
+}
+
+func recoveryURLReachable(recoveryURL string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), recoveryProbeTimeout)
+	defer cancel()
+	return urlReachable(ctx, http.DefaultClient, recoveryURL)
+}
+
+func waitForReadiness(ctx context.Context, client *http.Client, readinessURL string, pollInterval time.Duration) bool {
+	for attempt := 1; ; attempt++ {
+		if urlReachable(ctx, client, readinessURL) {
+			return true
+		}
+		log.Printf("Waiting for kiosk readiness target... (attempt %d)", attempt)
+
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
 }
 
 // Kiosk manages the Cog subprocess and the active URL.
@@ -678,6 +701,29 @@ func sendJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func main() {
+	readinessURL := strings.TrimSpace(os.Getenv("KIOSK_READINESS_URL"))
+	if readinessURL != "" {
+		if !strings.HasPrefix(readinessURL, "http://") && !strings.HasPrefix(readinessURL, "https://") {
+			log.Fatal("KIOSK_READINESS_URL must use http:// or https://")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), startupReadinessTimeout)
+		ready := waitForReadiness(
+			ctx,
+			&http.Client{Timeout: recoveryProbeTimeout},
+			readinessURL,
+			startupReadinessPollInterval,
+		)
+		cancel()
+		if ready {
+			log.Printf("Kiosk readiness target is available")
+		} else {
+			log.Printf(
+				"Kiosk readiness target is unavailable after %s; starting Cog with runtime fallback",
+				startupReadinessTimeout,
+			)
+		}
+	}
+
 	k := newKiosk()
 	k.start()
 	go k.Supervise()

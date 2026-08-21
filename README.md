@@ -19,6 +19,7 @@ Set these fleet variables in Balena Cloud to get going:
 | Variable | Example | Description |
 |----------|---------|-------------|
 | `LAUNCH_URL` | `https://example.com` | Page to display on startup |
+| `KIOSK_READINESS_URL` | unset | Optional additional HTTP endpoint checked before Cog starts |
 | `ROTATE_DISPLAY` | `right` | Rotate screen: `left`, `right`, `inverted` |
 | `TOUCH_DEVICE` | `*Waveshare*` | Glob to match your touchscreen (see [Touch calibration](#touch-calibration)) |
 
@@ -48,6 +49,7 @@ Set these fleet variables in Balena Cloud to get going:
 | `IGNORE_TLS_ERRORS` | _(unset)_ | Set to `1` to ignore TLS certificate errors |
 | `COG_EXTRA_ARGS` | _(unset)_ | Extra CLI flags passed to Cog (see [Cog flags](#cog-flags)) |
 | `KIOSK_CACHE_ROOT` | `/tmp/kiosk-wpe-cache` | Dedicated root for per-generation Cog cache directories |
+| `KIOSK_READINESS_URL` | _(unset)_ | Optional additional HTTP(S) dependency checked for up to 60 seconds before Cog starts. |
 | `KIOSK_RECOVERY_URL` | _(unset)_ | Optional HTTP(S) endpoint checked every 5 seconds. After an unreachable → reachable transition, Cog is hard-restarted once with a fresh cache. |
 
 ### API
@@ -198,6 +200,7 @@ uv run pre-commit run
 - `/health` returns 503 while Cog is stopped, not ready or above five crashes; it does not claim
   that the loaded page itself rendered successfully.
 - `LAUNCH_URL` is authoritative when the container starts. URL changes made through the control API apply to the current container runtime; after a container restart the latest `LAUNCH_URL` is loaded again.
+- Startup first keeps the existing bounded `LAUNCH_URL` availability check. When `KIOSK_READINESS_URL` is set, Cog then waits up to 60 seconds for that additional dependency. If the deadline expires, Cog still starts so the page's own runtime recovery can take over.
 - When `KIOSK_RECOVERY_URL` is configured, the controller records endpoint availability every five
   seconds. An initially healthy endpoint does not restart Cog. If the endpoint is unavailable at
   startup, or becomes unavailable later, the next successful check triggers one hard restart;

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,10 +9,69 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestWaitForReadinessNormalStartup(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Cache-Control") != "no-cache, no-store" {
+			t.Errorf("Cache-Control = %q", request.Header.Get("Cache-Control"))
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+	})}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if !waitForReadiness(ctx, client, "http://webserver", time.Millisecond) {
+		t.Fatal("ready target did not allow normal startup")
+	}
+}
+
+func TestWaitForReadinessAllowsLateStartup(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		if attempts.Add(1) < 3 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}, nil
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+	})}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if !waitForReadiness(ctx, client, "http://webserver", time.Millisecond) {
+		t.Fatal("late readiness target did not recover")
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("readiness attempts = %d, want 3", got)
+	}
+}
+
+func TestWaitForReadinessIsBoundedWhenUnavailable(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}, nil
+	})}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if waitForReadiness(ctx, client, "http://webserver", 5*time.Millisecond) {
+		t.Fatal("unavailable readiness target reported ready")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
 
 func TestBuildArgsMakesWebProcessFailuresObservable(t *testing.T) {
 	t.Setenv("COG_COMMAND", "cog")
