@@ -228,7 +228,7 @@ func cogNavigate(url string) error {
 	escaped := strings.ReplaceAll(url, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, "'", `\'`)
 	uris := fmt.Sprintf("['%s']", escaped)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), navigateTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gdbus", "call", //nolint:gosec
 		"--session",
@@ -242,6 +242,28 @@ func cogNavigate(url string) error {
 		log.Printf("gdbus: %s", strings.TrimSpace(string(out)))
 	}
 	return err
+}
+
+// Navigate is a var so tests can stub the D-Bus call; a loaded Pi can exceed a short timeout.
+var (
+	navigate        = cogNavigate
+	navigateTimeout = 10 * time.Second
+	navigateRetryIn = 500 * time.Millisecond
+)
+
+// navigateWithRetry tries the D-Bus navigate twice; false means the caller should restart Cog.
+func navigateWithRetry(url, action string) bool {
+	err := navigate(url)
+	if err == nil {
+		return true
+	}
+	log.Printf("D-Bus %s failed (attempt 1/2: %v); retrying", action, err)
+	time.Sleep(navigateRetryIn)
+	if err = navigate(url); err == nil {
+		return true
+	}
+	log.Printf("D-Bus %s failed (attempt 2/2: %v); falling back to restart", action, err)
+	return false
 }
 
 func getCogVersion() string {
@@ -390,8 +412,7 @@ func (k *Kiosk) SetURL(url string) {
 	k.currentURL = url
 	k.mu.Unlock()
 
-	if err := cogNavigate(url); err != nil {
-		log.Printf("D-Bus navigate failed (%v); falling back to restart", err)
+	if !navigateWithRetry(url, "navigate") {
 		k.Restart()
 		return
 	}
@@ -410,8 +431,7 @@ func (k *Kiosk) Reload() {
 	url := k.currentURL
 	k.mu.Unlock()
 
-	if err := cogNavigate(url); err != nil {
-		log.Printf("D-Bus reload failed (%v); falling back to restart", err)
+	if !navigateWithRetry(url, "reload") {
 		k.Restart()
 		return
 	}
