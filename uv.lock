@@ -1,11 +1,12 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 
 [[package]]
 name = "kiosk-wpe"
 version = "0.1.0"
 source = { virtual = "." }
+default-groups = []
 
 [package.dev-dependencies]
 dev = [
