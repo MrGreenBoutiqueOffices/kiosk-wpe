@@ -70,28 +70,71 @@ func envWith(key, value string) []string {
 
 // proc wraps a running exec.Cmd; exited is closed when the process terminates.
 type proc struct {
-	cmd      *exec.Cmd
-	exitCode int
-	exited   chan struct{}
-	pgid     int
+	cmd          *exec.Cmd
+	exitCode     int
+	exited       chan struct{}
+	pgid         int
+	renderFailed chan struct{}
+	stderrRead   *os.File
+}
+
+const pageFlipPermissionFailure = "failed to schedule a page flip: Permission denied"
+
+// renderFailureWriter observes the specific unrecoverable DRM failure while
+// retaining normal browser diagnostics. Preserve a suffix for split writes.
+type renderFailureWriter struct {
+	mu     sync.Mutex
+	tail   string
+	once   sync.Once
+	failed chan struct{}
+}
+
+func (w *renderFailureWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	combined := w.tail + string(data)
+	if strings.Contains(combined, pageFlipPermissionFailure) {
+		w.once.Do(func() { close(w.failed) })
+	}
+	if len(combined) >= len(pageFlipPermissionFailure) {
+		combined = combined[len(combined)-len(pageFlipPermissionFailure)+1:]
+	}
+	w.tail = combined
+	return len(data), nil
 }
 
 func launch(args []string, cacheDir string) (*proc, error) {
 	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	renderFailed := make(chan struct{})
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	// Use an actual file descriptor so cmd.Wait only waits for Cog itself.
+	// Surviving WPE children may hold stderr open after the leader crashes.
+	cmd.Stderr = stderrWrite
 	cmd.Env = envWith("XDG_CACHE_HOME", cacheDir)
 	// Own process group so SIGTERM reaches all WPE child processes (WPEWebProcess,
 	// WPENetworkProcess) and they release DRM/GL resources before we start a new Cog.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
+		_ = stderrRead.Close()
+		_ = stderrWrite.Close()
 		return nil, err
 	}
+	_ = stderrWrite.Close()
 	p := &proc{
-		cmd:    cmd,
-		exited: make(chan struct{}),
-		pgid:   cmd.Process.Pid,
+		cmd:          cmd,
+		exited:       make(chan struct{}),
+		pgid:         cmd.Process.Pid,
+		renderFailed: renderFailed,
+		stderrRead:   stderrRead,
 	}
+	go func() {
+		defer func() { _ = stderrRead.Close() }()
+		_, _ = io.Copy(io.MultiWriter(os.Stderr, &renderFailureWriter{failed: renderFailed}), stderrRead)
+	}()
 	go func() {
 		_ = cmd.Wait()
 		if cmd.ProcessState != nil {
@@ -112,7 +155,19 @@ func (p *proc) running() bool {
 	}
 }
 
+func (p *proc) renderingFailed() bool {
+	select {
+	case <-p.renderFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 func (p *proc) stop() {
+	if p.stderrRead != nil {
+		defer func() { _ = p.stderrRead.Close() }()
+	}
 	if p.pgid <= 0 || !processGroupRunning(p.pgid) {
 		return
 	}
@@ -191,6 +246,7 @@ func recoveryURLReachable(recoveryURL string) bool {
 
 // Kiosk manages the Cog subprocess and the active URL.
 type Kiosk struct {
+	lifecycleMu  sync.Mutex // serialize process cleanup, cache replacement and launch
 	mu           sync.Mutex
 	process      *proc
 	currentURL   string
@@ -320,20 +376,53 @@ func hasArgument(args []string, name string) bool {
 }
 
 func (k *Kiosk) start() {
+	k.replaceProcess(false)
+}
+
+// replaceProcess gives automatic crash recovery the same complete process-group
+// and cache cleanup as an operator restart, without resetting crash backoff.
+func (k *Kiosk) replaceProcess(intentional bool) {
+	k.lifecycleMu.Lock()
+	defer k.lifecycleMu.Unlock()
 	k.mu.Lock()
-	if k.stopping || (k.process != nil && k.process.running()) {
+	if k.stopping || (!intentional && k.process != nil && k.process.running() && !k.process.renderingFailed()) {
 		k.mu.Unlock()
 		return
 	}
+	previous := k.process
+	staleCacheDir := k.cacheDir
+	k.process = nil
+	k.cacheDir = ""
+	k.ready = false
+	k.restarting++
+	if intentional {
+		k.crashCount = 0
+	}
 	k.mu.Unlock()
+	defer func() {
+		k.mu.Lock()
+		k.restarting--
+		k.mu.Unlock()
+	}()
+
+	if previous != nil {
+		previous.stop()
+		// Give the kernel time to release old DRM ownership before relaunch.
+		time.Sleep(drmSettleDelay)
+	}
+	if staleCacheDir != "" {
+		if err := os.RemoveAll(staleCacheDir); err != nil {
+			log.Printf("Failed to clear stale Cog cache %s: %v", staleCacheDir, err)
+		}
+	}
 
 	// Run calibration outside the lock: udevadm settle can block for seconds.
 	reapplyTouchCalibration()
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	// Re-check after calibration in case Stop() or a concurrent start() raced.
-	if k.stopping || (k.process != nil && k.process.running()) {
+	// Shutdown may have begun while the previous process was being cleaned up.
+	if k.stopping {
 		return
 	}
 	if k.cacheDir == "" {
@@ -361,9 +450,12 @@ func (k *Kiosk) start() {
 }
 
 func (k *Kiosk) stop() {
+	k.lifecycleMu.Lock()
+	defer k.lifecycleMu.Unlock()
 	k.mu.Lock()
 	p := k.process
 	k.process = nil
+	k.ready = false
 	k.mu.Unlock()
 	if p != nil {
 		p.stop()
@@ -373,35 +465,7 @@ func (k *Kiosk) stop() {
 // Restart intentionally restarts Cog, resetting the crash counter.
 // It is safe to call concurrently; last caller wins.
 func (k *Kiosk) Restart() {
-	k.mu.Lock()
-	if k.stopping {
-		k.mu.Unlock()
-		return
-	}
-	k.crashCount = 0
-	k.restarting++
-	k.mu.Unlock()
-
-	k.stop()
-	// Allow the kernel to fully release the DRM master lock before the next
-	// Cog process tries to claim it; without this the gles renderer gets EPERM.
-	time.Sleep(drmSettleDelay)
-
-	k.mu.Lock()
-	staleCacheDir := k.cacheDir
-	k.cacheDir = ""
-	k.mu.Unlock()
-	if staleCacheDir != "" {
-		if err := os.RemoveAll(staleCacheDir); err != nil {
-			log.Printf("Failed to clear stale Cog cache %s: %v", staleCacheDir, err)
-		}
-	}
-
-	k.start()
-
-	k.mu.Lock()
-	k.restarting--
-	k.mu.Unlock()
+	k.replaceProcess(true)
 }
 
 // SetURL updates the URL for the current container runtime and navigates Cog
@@ -460,6 +524,7 @@ func (k *Kiosk) Supervise() {
 		if p != nil {
 			select {
 			case <-p.exited: // react immediately on crash
+			case <-p.renderFailed: // a live process can still have unusable DRM output
 			case <-time.After(pollInterval):
 			case <-k.stopCh:
 				return
@@ -479,7 +544,8 @@ func (k *Kiosk) Supervise() {
 		}
 
 		running := k.process != nil && k.process.running()
-		if running {
+		renderFailed := k.process != nil && k.process.renderingFailed()
+		if running && !renderFailed {
 			if !k.ready {
 				k.ready = true
 			}
@@ -499,9 +565,13 @@ func (k *Kiosk) Supervise() {
 		}
 
 		k.lastCrashAt = time.Now()
+		k.ready = false
 		k.crashCount++
 		count := k.crashCount
 		k.mu.Unlock()
+		if renderFailed {
+			log.Printf("Cog display permission failure detected; recovering its process group")
+		}
 
 		backoff := time.Duration(math.Min(math.Pow(2, float64(count-1)), backoffMaxS)) * time.Second
 		if count > healthyCrashThreshold {
@@ -662,6 +732,7 @@ func (h *handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"running":        h.kiosk.process != nil && h.kiosk.process.running(),
 		"crash_count":    h.kiosk.crashCount,
 		"ready":          h.kiosk.ready,
+		"render_failed":  h.kiosk.process != nil && h.kiosk.process.renderingFailed(),
 		"started_at":     h.kiosk.startedAt.UTC().Format(time.RFC3339),
 		"uptime_seconds": int(now.Sub(h.kiosk.startedAt).Seconds()),
 		"cog_started_at": cogStarted,
@@ -681,9 +752,10 @@ func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	crashCount := h.kiosk.crashCount
 	ready := h.kiosk.ready
 	running := h.kiosk.process != nil && h.kiosk.process.running()
+	renderFailed := h.kiosk.process != nil && h.kiosk.process.renderingFailed()
 	h.kiosk.mu.Unlock()
 
-	if !running || !ready || crashCount > healthyCrashThreshold {
+	if !running || !ready || renderFailed || crashCount > healthyCrashThreshold {
 		sendJSON(w, http.StatusServiceUnavailable, map[string]bool{"ok": false})
 		return
 	}
