@@ -105,7 +105,7 @@ For WebKit-level settings (fonts, JavaScript, media, etc.) run `cog --help-webse
 | `POST` | `/url` | `{"url": "https://..."}` — navigate via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. Only `http://`, `https://`, and `about:` schemes accepted. |
 | `POST` | `/refresh` | Re-navigate to the current URL via D-Bus without restarting Cog (async, returns 200 immediately). Falls back to a hard restart if D-Bus is unavailable. |
 | `POST` | `/restart` | Fully restart the Cog process group with a fresh cache and re-apply touch calibration (async, returns 200 immediately). Use when Cog is in a bad state. |
-| `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
+| `GET` | `/status` | JSON with `url`, `running`, `crash_count`, `ready`, `render_failed`, `started_at`, `uptime_seconds`, `cog_started_at`, `last_crash_at`, `cog_version` |
 | `GET` | `/health` | 200 only while Cog is running, ready and outside a crash loop; otherwise 503 |
 
 ```sh
@@ -187,16 +187,15 @@ uv run pre-commit run
   identifiers in URLs accept that those values can appear in the container logs.
 - URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
 - After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
-- Cog and all its WPE subprocesses run in their own process group; on a hard restart the entire group is signalled so DRM/GL resources are fully released before the new instance starts.
-- Every hard restart uses a new cache generation below `KIOSK_CACHE_ROOT` and removes the previous
-  generation. Persistent browser data such as LocalStorage and IndexedDB is not removed.
+- Cog and all its WPE subprocesses run in their own process group; both automatic crash recovery and a hard restart signal the entire old group before starting the next browser. Process cleanup, cache replacement and launch are serialized so overlapping restart requests cannot delete the active browser's cache.
+- Every automatic recovery and hard restart uses a new cache generation below `KIOSK_CACHE_ROOT` and removes the previous generation. Persistent browser data such as LocalStorage and IndexedDB is not removed.
 - Cog defaults to `--webprocess-failure=exit`, making a crashed web process visible to the
   supervisor and `/health` instead of leaving a falsely healthy error surface. An explicit
   `COG_EXTRA_ARGS` value can override that policy.
 - A 500 ms settle delay after stopping Cog prevents "Cannot set mode (Permission denied)" DRM errors when using the `gles` renderer.
 - Cog crashes are detected instantly (via process exit channel) and restarted with exponential backoff (max 30 s). The crash counter resets only after 30 s of stable uptime.
-- `/health` returns 503 while Cog is stopped, not ready or above five crashes; it does not claim
-  that the loaded page itself rendered successfully.
+- A `failed to schedule a page flip: Permission denied` browser diagnostic marks that process as `render_failed` and triggers the same complete recovery with crash backoff, even if Cog still runs. Other warnings do not trigger this recovery.
+- `/health` returns 503 while Cog is stopped, not ready, has this display failure or is above five crashes; it does not prove that the loaded page or physical panel rendered successfully.
 - `LAUNCH_URL` is authoritative when the container starts. URL changes made through the control API apply to the current container runtime; after a container restart the latest `LAUNCH_URL` is loaded again.
 - When `KIOSK_RECOVERY_URL` is configured, the controller records endpoint availability every five
   seconds. An initially healthy endpoint does not restart Cog. If the endpoint is unavailable at
