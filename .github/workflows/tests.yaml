@@ -1,0 +1,23 @@
+---
+name: Tests
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7.0.1
+      - name: 🏗 Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: 🧪 Run Go tests
+        run: sh tests/run.sh
+      - name: 🧪 Verify browser cleanup as container PID 1
+        run: sh tests/run.sh --pid1

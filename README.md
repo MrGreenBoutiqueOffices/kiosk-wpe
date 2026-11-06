@@ -160,6 +160,18 @@ uv run pre-commit install
 go build -o kiosk_controller .
 ```
 
+### Run tests
+
+Tests live in `tests/`, split into browser navigation, health, process cleanup, restarts, render failures and upstream recovery. The runner compiles the controller and tests together in a temporary directory so tests can exercise internal functions without exporting them. The nested test module keeps these test sources out of production builds and root package discovery.
+
+```bash
+sh tests/run.sh
+sh tests/run.sh -run TestNavigateWithRetry
+sh tests/run.sh --pid1
+```
+
+The `--pid1` mode requires Docker and runs the suite as PID 1 in an isolated Linux container, including the orphaned-child regression. `.github/workflows/tests.yaml` runs both modes; `.github/workflows/linting.yaml` handles linting.
+
 ### Run pre-commit checks
 
 As this repository uses the [pre-commit][pre-commit] framework, all changes
@@ -188,7 +200,7 @@ uv run pre-commit run
 - URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
 - After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
 - Cog and all its WPE subprocesses run in their own process group; both automatic crash recovery and a hard restart signal the entire old group before starting the next browser. Process cleanup, cache replacement and launch are serialized so overlapping restart requests cannot delete the active browser's cache.
-- As container PID 1, the controller also waits for adopted WPE/bwrap children in the stopped browser's process group. This removes zombie processes before relaunch, including after the Cog leader crashes, without collecting exit statuses owned by other controller commands. The PID 1 regression test can be run explicitly with the test binary as the container entrypoint.
+- As container PID 1, the controller also waits for adopted WPE/bwrap children in the stopped browser's process group. This removes zombie processes before relaunch, including after the Cog leader crashes, without collecting exit statuses owned by other controller commands. The PID 1 regression is covered by `sh tests/run.sh --pid1` and the Tests workflow.
 - Every automatic recovery and hard restart uses a new cache generation below `KIOSK_CACHE_ROOT` and removes the previous generation. Persistent browser data such as LocalStorage and IndexedDB is not removed.
 - Cog defaults to `--webprocess-failure=exit`, making a crashed web process visible to the
   supervisor and `/health` instead of leaving a falsely healthy error surface. An explicit
