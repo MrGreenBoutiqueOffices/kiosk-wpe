@@ -101,6 +101,39 @@ wait
 	}
 }
 
+func TestPID1CrashRecoveryReapsOrphanedChildren(t *testing.T) {
+	if os.Getpid() != 1 {
+		t.Skip("run the test binary as container PID 1 to reproduce adopted browser children")
+	}
+	directory := t.TempDir()
+	childPIDPath := filepath.Join(directory, "child.pid")
+	script := writeExecutable(t, directory, "orphaned-browser.sh", `#!/bin/sh
+sleep 30 &
+echo "$!" > "$CHILD_PID_FILE"
+wait
+`)
+	t.Setenv("CHILD_PID_FILE", childPIDPath)
+	for generation := range 3 {
+		process, err := launch([]string{script}, filepath.Join(directory, "cache"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(process.stop)
+		childPID := waitForPID(t, childPIDPath)
+		if err := process.cmd.Process.Kill(); err != nil {
+			t.Fatal(err)
+		}
+		<-process.exited
+		process.stop()
+		if processExists(childPID) || processGroupRunning(process.pgid) {
+			t.Fatalf("generation %d leaked adopted child %d or its process group", generation, childPID)
+		}
+		if err := os.Remove(childPIDPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRestartUsesFreshCacheAndResolvesChangedUpstream(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	upstreamPath := filepath.Join(temporaryDirectory, "upstream")
@@ -308,6 +341,29 @@ func TestRenderFailureWriterIgnoresOtherWarnings(t *testing.T) {
 	case <-failed:
 		t.Fatal("unrelated warning triggered display recovery")
 	default:
+	}
+}
+
+func TestRenderFailureWriterDetectsFatalStartupFailures(t *testing.T) {
+	for _, diagnostic := range []string{
+		"Platform setup failed: Failed to initialize DRM",
+		"Could not instantiate any WPE backend.",
+		"creating thread 'gmain': Error creating thread: Resource temporarily unavailable",
+		"Unable to spawn a new child process: Failed to spawn child process WPENetworkProcess",
+	} {
+		t.Run(diagnostic, func(t *testing.T) {
+			failed := make(chan struct{})
+			writer := &renderFailureWriter{failed: failed}
+			// Real stderr reads can split a diagnostic at any byte boundary.
+			for _, character := range []byte(diagnostic) {
+				_, _ = writer.Write([]byte{character})
+			}
+			select {
+			case <-failed:
+			default:
+				t.Fatal("fatal browser startup failure was reported as usable output")
+			}
+		})
 	}
 }
 
