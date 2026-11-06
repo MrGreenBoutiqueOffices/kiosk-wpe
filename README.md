@@ -160,6 +160,18 @@ uv run pre-commit install
 go build -o kiosk_controller .
 ```
 
+### Run tests
+
+Tests live in `tests/`, split into browser navigation, health, process cleanup, restarts, render failures and upstream recovery. The runner compiles the controller and tests together in a temporary directory so tests can exercise internal functions without exporting them. The nested test module keeps these test sources out of production builds and root package discovery.
+
+```bash
+sh tests/run.sh
+sh tests/run.sh -run TestNavigateWithRetry
+sh tests/run.sh --pid1
+```
+
+The `--pid1` mode requires Docker and runs the suite as PID 1 in an isolated Linux container, including the orphaned-child regression. `.github/workflows/tests.yaml` runs both modes; `.github/workflows/linting.yaml` handles linting.
+
 ### Run pre-commit checks
 
 As this repository uses the [pre-commit][pre-commit] framework, all changes
@@ -188,13 +200,14 @@ uv run pre-commit run
 - URL navigation and page reloads use D-Bus (`org.gtk.Application.Open` on `com.igalia.Cog`) so Cog never needs to restart for a URL change. A D-Bus session daemon is started by `start.sh` and its address is exported as `DBUS_SESSION_BUS_ADDRESS`. If D-Bus is unavailable, all navigation falls back to a hard restart.
 - After a D-Bus navigation, `udevadm trigger --action=change` is fired after 500 ms so libinput re-reads the hwdb calibration matrix for any input device opened by the new WPEWebProcess.
 - Cog and all its WPE subprocesses run in their own process group; both automatic crash recovery and a hard restart signal the entire old group before starting the next browser. Process cleanup, cache replacement and launch are serialized so overlapping restart requests cannot delete the active browser's cache.
+- As container PID 1, the controller also waits for adopted WPE/bwrap children in the stopped browser's process group. This removes zombie processes before relaunch, including after the Cog leader crashes, without collecting exit statuses owned by other controller commands. The PID 1 regression is covered by `sh tests/run.sh --pid1` and the Tests workflow.
 - Every automatic recovery and hard restart uses a new cache generation below `KIOSK_CACHE_ROOT` and removes the previous generation. Persistent browser data such as LocalStorage and IndexedDB is not removed.
 - Cog defaults to `--webprocess-failure=exit`, making a crashed web process visible to the
   supervisor and `/health` instead of leaving a falsely healthy error surface. An explicit
   `COG_EXTRA_ARGS` value can override that policy.
 - A 500 ms settle delay after stopping Cog prevents "Cannot set mode (Permission denied)" DRM errors when using the `gles` renderer.
 - Cog crashes are detected instantly (via process exit channel) and restarted with exponential backoff (max 30 s). The crash counter resets only after 30 s of stable uptime.
-- A `failed to schedule a page flip: Permission denied` browser diagnostic marks that process as `render_failed` and triggers the same complete recovery with crash backoff, even if Cog still runs. Other warnings do not trigger this recovery.
+- Fatal browser diagnostics mark that process as `render_failed` and trigger the same complete recovery with crash backoff, even if Cog still runs. These include `failed to schedule a page flip: Permission denied`, failed DRM/backend initialization and failures to create threads or child processes. Other warnings do not trigger this recovery.
 - `/health` returns 503 while Cog is stopped, not ready, has this display failure or is above five crashes; it does not prove that the loaded page or physical panel rendered successfully.
 - `LAUNCH_URL` is authoritative when the container starts. URL changes made through the control API apply to the current container runtime; after a container restart the latest `LAUNCH_URL` is loaded again.
 - When `KIOSK_RECOVERY_URL` is configured, the controller records endpoint availability every five

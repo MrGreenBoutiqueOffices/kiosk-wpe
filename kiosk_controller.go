@@ -80,7 +80,15 @@ type proc struct {
 
 const pageFlipPermissionFailure = "failed to schedule a page flip: Permission denied"
 
-// renderFailureWriter observes the specific unrecoverable DRM failure while
+var fatalBrowserDiagnostics = []string{
+	pageFlipPermissionFailure,
+	"Platform setup failed: Failed to initialize DRM",
+	"Could not instantiate any WPE backend.",
+	"Error creating thread: Resource temporarily unavailable",
+	"Unable to spawn a new child process:",
+}
+
+// renderFailureWriter observes unrecoverable browser/display failures while
 // retaining normal browser diagnostics. Preserve a suffix for split writes.
 type renderFailureWriter struct {
 	mu     sync.Mutex
@@ -93,11 +101,17 @@ func (w *renderFailureWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	combined := w.tail + string(data)
-	if strings.Contains(combined, pageFlipPermissionFailure) {
-		w.once.Do(func() { close(w.failed) })
+	longest := 0
+	for _, diagnostic := range fatalBrowserDiagnostics {
+		if strings.Contains(combined, diagnostic) {
+			w.once.Do(func() { close(w.failed) })
+		}
+		if len(diagnostic) > longest {
+			longest = len(diagnostic)
+		}
 	}
-	if len(combined) >= len(pageFlipPermissionFailure) {
-		combined = combined[len(combined)-len(pageFlipPermissionFailure)+1:]
+	if len(combined) >= longest {
+		combined = combined[len(combined)-longest+1:]
 	}
 	w.tail = combined
 	return len(data), nil
@@ -181,22 +195,47 @@ func (p *proc) stop() {
 	defer deadline.Stop()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
+	killed := false
 
-	for processGroupRunning(p.pgid) {
+	for {
+		// As container PID 1 we adopt orphaned WPE/bwrap descendants. A dead
+		// child retains its PID until waited for, even after SIGKILL. Reap only
+		// this generation, after cmd.Wait has collected the Cog leader, so we
+		// cannot steal another exec.Cmd's exit status.
+		if !p.running() {
+			p.reapChildren()
+		}
+		if !processGroupRunning(p.pgid) {
+			break
+		}
 		select {
 		case <-deadline.C:
+			if killed {
+				log.Printf("Cog process group %d still exists after SIGKILL", p.pgid)
+				return
+			}
 			log.Printf("Cog process group %d did not stop; killing it", p.pgid)
 			_ = syscall.Kill(-p.pgid, syscall.SIGKILL)
-			if p.running() {
-				<-p.exited
-			}
-			return
+			killed = true
+			deadline.Reset(2 * time.Second)
 		case <-ticker.C:
 		}
 	}
 
 	if p.running() {
 		<-p.exited
+	}
+}
+
+func (p *proc) reapChildren() {
+	for {
+		pid, err := syscall.Wait4(-p.pgid, nil, syscall.WNOHANG, nil)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil || pid <= 0 {
+			return
+		}
 	}
 }
 
@@ -570,7 +609,7 @@ func (k *Kiosk) Supervise() {
 		count := k.crashCount
 		k.mu.Unlock()
 		if renderFailed {
-			log.Printf("Cog display permission failure detected; recovering its process group")
+			log.Printf("Cog fatal browser/display failure detected; recovering its process group")
 		}
 
 		backoff := time.Duration(math.Min(math.Pow(2, float64(count-1)), backoffMaxS)) * time.Second
