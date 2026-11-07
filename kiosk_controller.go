@@ -365,10 +365,32 @@ func getCogVersion() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "cog", "--version").Output()
-	if err != nil {
+	version := strings.TrimSpace(string(out))
+	if err != nil || version == "" {
 		return "unknown"
 	}
-	return strings.TrimSpace(string(out))
+	return version
+}
+
+// Retry a failed startup probe without delaying the browser or status API.
+func (k *Kiosk) retryCogVersion(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-k.stopCh:
+			return
+		case <-ticker.C:
+			version := getCogVersion()
+			if version == "unknown" {
+				continue
+			}
+			k.mu.Lock()
+			k.cogVersion = version
+			k.mu.Unlock()
+			return
+		}
+	}
 }
 
 func newKiosk() *Kiosk {
@@ -811,6 +833,9 @@ func sendJSON(w http.ResponseWriter, status int, v any) {
 func main() {
 	k := newKiosk()
 	k.start()
+	if k.cogVersion == "unknown" {
+		go k.retryCogVersion(10 * time.Second)
+	}
 	go k.Supervise()
 	if recoveryURL := strings.TrimSpace(os.Getenv("KIOSK_RECOVERY_URL")); recoveryURL != "" {
 		if !strings.HasPrefix(recoveryURL, "http://") && !strings.HasPrefix(recoveryURL, "https://") {
